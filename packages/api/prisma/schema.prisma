@@ -1,0 +1,824 @@
+// ===========================================================================
+// CRM CENTRAL PNEUS - modelo de dados
+//
+// Regras que valem para o schema inteiro:
+//  - Todo registro carrega `orgId`. O isolamento por organizacao e verificado
+//    em TODA consulta, mesmo com uma unica empresa hoje.
+//  - Nada e apagado de verdade quando ha historico de conversa envolvido:
+//    usamos flags (`isActive`, `deletedAt`) para nao furar o historico.
+//  - Todo indice aqui existe por causa de uma consulta real do backend.
+// ===========================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Enums -----------------------------------------------------------------
+
+enum UserRole {
+  OWNER
+  ADMIN
+  SUPERVISOR
+  AGENT
+}
+
+enum AgentPresence {
+  OFFLINE
+  ONLINE
+  AWAY
+  BUSY
+}
+
+enum ChannelType {
+  WHATSAPP_CLOUD
+  WHATSAPP_EVOLUTION
+  TELEGRAM
+  WEBCHAT
+}
+
+enum ChannelStatus {
+  PENDING
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum ConversationStatus {
+  BOT
+  QUEUED
+  ASSIGNED
+  PENDING
+  RESOLVED
+}
+
+enum ConversationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSenderType {
+  CONTACT
+  AGENT
+  AI
+  SYSTEM
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  STICKER
+  LOCATION
+  CONTACTS
+  INTERACTIVE
+  TEMPLATE
+  REACTION
+  SYSTEM
+  UNSUPPORTED
+}
+
+enum MessageStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum RoutingStrategy {
+  ROUND_ROBIN
+  LEAST_BUSY
+  MANUAL
+}
+
+enum LifecycleStage {
+  LEAD
+  WARM
+  CUSTOMER
+  CHURNED
+}
+
+enum ConversationEventType {
+  CREATED
+  AI_STARTED
+  AI_HANDOFF
+  AI_DISABLED
+  QUEUED
+  ASSIGNED
+  UNASSIGNED
+  TRANSFERRED
+  DEPARTMENT_CHANGED
+  PRIORITY_CHANGED
+  RESOLVED
+  REOPENED
+  SLA_BREACHED
+  ESCALATED
+  NOTE_ADDED
+  TAG_ADDED
+  TAG_REMOVED
+  AUTO_CLOSED
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  SKIPPED
+}
+
+// --- Organizacao e pessoas -------------------------------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  timezone  String   @default("America/Sao_Paulo")
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  departments   Department[]
+  channels      Channel[]
+  contacts      Contact[]
+  conversations Conversation[]
+  messages      Message[]
+  aiPersonas    AiPersona[]
+  quickReplies  QuickReply[]
+  templates     MessageTemplate[]
+  auditLogs     AuditLog[]
+  tireProducts  TireProduct[]
+  serviceItems  ServiceItem[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String  @id @default(cuid())
+  orgId        String
+  name         String
+  email        String
+  passwordHash String
+  role         UserRole @default(AGENT)
+  avatarUrl    String?
+
+  isActive Boolean @default(true)
+
+  /// Teto de conversas simultaneas. O roteador nunca ultrapassa este numero.
+  maxConcurrentChats Int @default(5)
+
+  presence          AgentPresence @default(OFFLINE)
+  presenceChangedAt DateTime?
+  /// Ultimo sinal de vida (heartbeat do socket). Alimenta o auto-away.
+  lastSeenAt        DateTime?
+
+  /// Usado pelo rodizio (round-robin) para saber de quem foi a ultima vez.
+  lastAssignedAt DateTime?
+
+  lastLoginAt DateTime?
+  /// Bloqueio temporario apos tentativas de login malsucedidas.
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization       Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  departments        DepartmentMember[]
+  sessions           Session[]
+  conversations      Conversation[]     @relation("ConversationAssignee")
+  messages           Message[]          @relation("MessageSender")
+  conversationEvents ConversationEvent[]
+  preferredByContacts Contact[]         @relation("ContactPreferredAgent")
+  auditLogs          AuditLog[]
+  presenceLogs       AgentPresenceLog[]
+
+  @@unique([orgId, email])
+  @@index([orgId, isActive, presence])
+  @@index([orgId, role])
+  @@map("users")
+}
+
+model Session {
+  id               String   @id @default(cuid())
+  userId           String
+  /// Guardamos apenas o hash do refresh token; o valor cru so existe no cliente.
+  refreshTokenHash String   @unique
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  lastUsedAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model AgentPresenceLog {
+  id        String        @id @default(cuid())
+  userId    String
+  presence  AgentPresence
+  /// true quando quem mudou foi o sistema (auto-away), nao a pessoa.
+  automatic Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("agent_presence_logs")
+}
+
+// --- Setores ---------------------------------------------------------------
+
+model Department {
+  id          String  @id @default(cuid())
+  orgId       String
+  name        String
+  slug        String
+  description String?
+  color       String  @default("#2563eb")
+
+  /// Rotulo exibido no menu do WhatsApp. Limite de 24 caracteres da Meta.
+  menuLabel  String?
+  showInMenu Boolean @default(true)
+  order      Int     @default(0)
+
+  isActive        Boolean         @default(true)
+  routingStrategy RoutingStrategy @default(LEAST_BUSY)
+  aiEnabled       Boolean         @default(true)
+
+  /// [{ weekday: 0-6, start: "08:00", end: "18:00" }]
+  businessHours  Json?
+  offlineMessage String?
+  closingMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization  Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  members       DepartmentMember[]
+  conversations Conversation[]
+  quickReplies  QuickReply[]
+  contacts      Contact[]          @relation("ContactLastDepartment")
+
+  @@unique([orgId, slug])
+  @@index([orgId, isActive, order])
+  @@map("departments")
+}
+
+model DepartmentMember {
+  id           String  @id @default(cuid())
+  departmentId String
+  userId       String
+  isSupervisor Boolean @default(false)
+  /// Prioridade no rodizio: numero maior recebe primeiro.
+  priority     Int     @default(0)
+  createdAt    DateTime @default(now())
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([departmentId, userId])
+  @@index([userId])
+  @@map("department_members")
+}
+
+// --- Canais ----------------------------------------------------------------
+
+model Channel {
+  id    String      @id @default(cuid())
+  orgId String
+  type  ChannelType
+  name  String
+
+  /// Numero/handle publico do canal (ex.: 5531999998888). So para exibicao.
+  identifier String?
+
+  isActive  Boolean @default(true)
+  isDefault Boolean @default(false)
+
+  /// Credenciais cifradas com AES-256-GCM. Nunca saem daqui em texto claro.
+  credentialsEncrypted String?
+
+  status            ChannelStatus @default(PENDING)
+  statusDetail      String?
+  lastHealthCheckAt DateTime?
+  /// QR Code temporario (apenas canal Evolution, enquanto pareia).
+  pairingCode       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization  Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contacts      ContactIdentity[]
+  conversations Conversation[]
+  messages      Message[]
+  webhookEvents WebhookEvent[]
+  templates     MessageTemplate[]
+
+  @@unique([orgId, type, identifier])
+  @@index([orgId, isActive])
+  @@map("channels")
+}
+
+/// Deduplicacao de webhook. E a garantia de que a mesma mensagem do provedor
+/// nunca vira duas mensagens no CRM, mesmo com reentrega da Meta.
+model WebhookEvent {
+  id         String @id @default(cuid())
+  channelId  String
+  /// Id do evento no provedor (id da mensagem, do status, etc).
+  externalId String
+  eventType  String
+  payload    Json
+  /// SHA-256 do payload: distingue reentrega identica de alteracao real.
+  payloadHash String
+
+  status   WebhookEventStatus @default(RECEIVED)
+  attempts Int                @default(0)
+  error    String?
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, externalId, eventType])
+  @@index([status, receivedAt])
+  @@index([receivedAt])
+  @@map("webhook_events")
+}
+
+// --- Contatos --------------------------------------------------------------
+
+model Contact {
+  id    String @id @default(cuid())
+  orgId String
+
+  name      String?
+  /// Nome que o proprio cliente configurou no WhatsApp.
+  pushName  String?
+  /// Sempre em E.164 sem "+", ja com o nono digito normalizado.
+  phone     String?
+  email     String?
+  document  String?
+  avatarUrl String?
+
+  lifecycleStage LifecycleStage @default(LEAD)
+  tags           String[]       @default([])
+  notes          String?
+  customFields   Json           @default("{}")
+
+  isBlocked      Boolean   @default(false)
+  firstContactAt DateTime?
+  lastContactAt  DateTime?
+
+  /// Atendente "dono" do cliente: recorrentes voltam para ele quando disponivel.
+  preferredAgentId  String?
+  lastDepartmentId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  preferredAgent User?             @relation("ContactPreferredAgent", fields: [preferredAgentId], references: [id], onDelete: SetNull)
+  lastDepartment Department?       @relation("ContactLastDepartment", fields: [lastDepartmentId], references: [id], onDelete: SetNull)
+  identities     ContactIdentity[]
+  conversations  Conversation[]
+
+  @@unique([orgId, phone])
+  @@index([orgId, lastContactAt])
+  @@index([orgId, lifecycleStage])
+  @@index([orgId, name])
+  @@map("contacts")
+}
+
+/// Um mesmo contato pode existir em varios canais com ids diferentes.
+model ContactIdentity {
+  id         String @id @default(cuid())
+  contactId  String
+  channelId  String
+  /// wa_id, chat_id do Telegram, etc.
+  externalId String
+  /// Dados crus do provedor sobre o contato.
+  raw        Json?
+  createdAt  DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, externalId])
+  @@index([contactId])
+  @@map("contact_identities")
+}
+
+// --- Conversas -------------------------------------------------------------
+
+model Conversation {
+  id        String @id @default(cuid())
+  orgId     String
+  contactId String
+  channelId String
+
+  departmentId   String?
+  assignedUserId String?
+
+  status   ConversationStatus   @default(BOT)
+  priority ConversationPriority @default(NORMAL)
+  subject  String?
+  tags     String[]             @default([])
+
+  /// true enquanto a IA responde sozinha. Vira false no handoff.
+  aiControlled Boolean @default(true)
+  /// Quantas respostas a IA ja deu nesta conversa (trava o loop infinito).
+  aiTurnCount  Int     @default(0)
+  leadScore    Int?
+  leadSummary  String?
+  intent       String?
+
+  /// Mensagens do cliente que o atendente atribuido ainda nao leu.
+  unreadCount Int @default(0)
+
+  queuedAt            DateTime?
+  assignedAt          DateTime?
+  firstResponseAt     DateTime?
+  lastMessageAt       DateTime?
+  lastCustomerMessageAt DateTime?
+  lastAgentMessageAt  DateTime?
+  resolvedAt          DateTime?
+
+  /// Fim da janela de 24h do WhatsApp. Depois disso, so template aprovado.
+  windowExpiresAt DateTime?
+
+  slaFirstResponseDueAt DateTime?
+  slaBreached           Boolean   @default(false)
+
+  metadata Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  channel      Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  assignedUser User?        @relation("ConversationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+
+  messages Message[]
+  events   ConversationEvent[]
+
+  /// Consulta da caixa de entrada.
+  @@index([orgId, status, lastMessageAt])
+  /// Fila por setor.
+  @@index([orgId, departmentId, status, queuedAt])
+  /// "Minhas conversas".
+  @@index([orgId, assignedUserId, status, lastMessageAt])
+  /// Reabertura: achar a conversa aberta deste contato neste canal.
+  @@index([contactId, channelId, status])
+  /// Varredura de SLA e de encerramento automatico.
+  @@index([status, slaFirstResponseDueAt])
+  @@index([status, lastMessageAt])
+  @@map("conversations")
+}
+
+model ConversationEvent {
+  id             String                @id @default(cuid())
+  conversationId String
+  type           ConversationEventType
+  actorUserId    String?
+  data           Json                  @default("{}")
+  createdAt      DateTime              @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([type, createdAt])
+  @@map("conversation_events")
+}
+
+// --- Mensagens -------------------------------------------------------------
+
+model Message {
+  id             String @id @default(cuid())
+  orgId          String
+  conversationId String
+  channelId      String
+
+  direction    MessageDirection
+  senderType   MessageSenderType
+  senderUserId String?
+
+  type    MessageType @default(TEXT)
+  content String?
+  /// Estrutura crua (botoes, lista, localizacao, template renderizado...).
+  payload Json?
+
+  /// Nota interna: aparece na timeline da equipe, nunca vai para o cliente.
+  isPrivate Boolean @default(false)
+
+  mediaId String?
+
+  /// Id da mensagem no provedor. Chave de deduplicacao do inbound.
+  externalId        String?
+  replyToMessageId  String?
+  /// Idempotencia do outbound: reenvio do mesmo clique nao duplica mensagem.
+  clientMessageId   String?
+
+  status        MessageStatus @default(PENDING)
+  failureReason String?
+  /// Tentativas de envio ja feitas (visivel no painel quando falha).
+  attempts      Int           @default(0)
+
+  createdAt   DateTime  @default(now())
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channel      Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  sender       User?        @relation("MessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  media        MediaAsset?  @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+
+  replyTo   Message?  @relation("MessageReply", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies   Message[] @relation("MessageReply")
+
+  /// Deduplicacao do inbound (NULLs nao colidem no Postgres).
+  @@unique([channelId, externalId])
+  /// Idempotencia do outbound.
+  @@unique([conversationId, clientMessageId])
+  @@index([conversationId, createdAt])
+  @@index([orgId, createdAt])
+  /// Varredura do outbox: mensagens presas em PENDING/QUEUED.
+  @@index([status, createdAt])
+  @@map("messages")
+}
+
+model MediaAsset {
+  id    String @id @default(cuid())
+  orgId String
+
+  storageKey String
+  mimeType   String
+  fileName   String?
+  size       Int?
+  /// Deduplicacao de arquivo identico enviado varias vezes.
+  sha256     String?
+  width      Int?
+  height     Int?
+  durationSeconds Int?
+
+  /// Id da midia no provedor (para baixar depois, se preciso).
+  externalId String?
+  /// Transcricao de audio feita pela IA, quando habilitada.
+  transcription String?
+
+  createdAt DateTime @default(now())
+
+  messages Message[]
+
+  @@index([orgId, sha256])
+  @@map("media_assets")
+}
+
+// --- IA --------------------------------------------------------------------
+
+model AiPersona {
+  id    String @id @default(cuid())
+  orgId String
+
+  name         String
+  systemPrompt String  @db.Text
+  greeting     String?
+
+  provider    String @default("anthropic")
+  model       String @default("claude-sonnet-5")
+  temperature Float  @default(0.4)
+  maxTokens   Int    @default(800)
+
+  maxTurnsBeforeHandoff Int @default(12)
+  /// O que a IA precisa descobrir antes de considerar o lead aquecido.
+  qualificationGoals    Json @default("[]")
+
+  isActive  Boolean  @default(true)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, isActive])
+  @@map("ai_personas")
+}
+
+/// Consumo da IA. Alimenta o teto de gasto mensal e o relatorio de custo.
+model AiUsage {
+  id             String @id @default(cuid())
+  orgId          String
+  conversationId String?
+
+  provider     String
+  model        String
+  inputTokens  Int
+  outputTokens Int
+  cachedTokens Int    @default(0)
+  costUsd      Float  @default(0)
+  latencyMs    Int?
+  /// chat | analysis | transcription
+  purpose      String @default("chat")
+  success      Boolean @default(true)
+  error        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([conversationId])
+  @@map("ai_usage")
+}
+
+// --- Produtividade ---------------------------------------------------------
+
+model QuickReply {
+  id           String  @id @default(cuid())
+  orgId        String
+  departmentId String?
+  /// Digitado no chat como "/orcamento".
+  shortcut     String
+  content      String  @db.Text
+  usageCount   Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, shortcut])
+  @@map("quick_replies")
+}
+
+/// Template aprovado pela Meta. Unico jeito de falar fora da janela de 24h.
+model MessageTemplate {
+  id        String @id @default(cuid())
+  orgId     String
+  channelId String
+
+  name     String
+  language String @default("pt_BR")
+  category String @default("UTILITY")
+  /// APPROVED | PENDING | REJECTED | DISABLED - espelho do painel da Meta.
+  status   String @default("PENDING")
+  /// Estrutura de componentes (header/body/footer/buttons) da Meta.
+  components Json
+  /// Quantidade de variaveis {{1}}, {{2}}... no corpo.
+  variableCount Int @default(0)
+
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  channel      Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, name, language])
+  @@index([orgId, status])
+  @@map("message_templates")
+}
+
+// --- Auditoria e configuracao ----------------------------------------------
+
+model AuditLog {
+  id     String  @id @default(cuid())
+  orgId  String
+  userId String?
+
+  action   String
+  entity   String
+  entityId String?
+  /// Estado antes/depois. Permite reconstruir quem mudou o que.
+  before   Json?
+  after    Json?
+
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+/// Contadores de rodizio e outros estados pequenos que precisam sobreviver
+/// ao restart, mas nao merecem tabela propria.
+model SystemState {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("system_state")
+}
+
+// --- Catalogo da loja de pneus ---------------------------------------------
+
+enum TireCategory {
+  PASSEIO
+  SUV
+  CAMINHONETE
+  CARGA
+  MOTO
+}
+
+/**
+ * Pneu em catalogo.
+ *
+ * `sizeKey` guarda a medida ja normalizada ("205/55R16") justamente para a
+ * busca ser um acerto exato de indice: o cliente digita de dez jeitos
+ * diferentes, o extrator normaliza, e aqui a consulta e direta e rapida.
+ */
+model TireProduct {
+  id    String @id @default(cuid())
+  orgId String
+
+  brand String
+  model String
+
+  /// Medida normalizada, ex.: "205/55R16". Chave de busca.
+  sizeKey     String
+  width       Int
+  aspectRatio Int
+  /// Aro em polegadas. Decimal por causa de 17.5 / 22.5 (carga).
+  rim         Decimal @db.Decimal(4, 1)
+
+  loadIndex   Int?
+  speedRating String?
+
+  category TireCategory @default(PASSEIO)
+
+  /// Precos em centavos: dinheiro nunca em ponto flutuante.
+  priceCents      Int
+  promoPriceCents Int?
+
+  stockQuantity  Int @default(0)
+  warrantyMonths Int @default(12)
+
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  /// Consulta quente: "o que tenho nesta medida, em estoque".
+  @@index([orgId, sizeKey, isActive])
+  @@index([orgId, rim, isActive])
+  @@unique([orgId, brand, model, sizeKey])
+  @@map("tire_products")
+}
+
+/// Servico de oficina (alinhamento, balanceamento, troca de oleo...).
+model ServiceItem {
+  id    String @id @default(cuid())
+  orgId String
+
+  name        String
+  slug        String
+  description String?
+  priceCents  Int
+  /// Duracao estimada, para a IA responder "leva uns 40 minutos".
+  durationMinutes Int @default(30)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, slug])
+  @@index([orgId, isActive])
+  @@map("service_items")
+}

@@ -1,0 +1,176 @@
+# Infraestrutura do CRM Central Pneus.
+#
+#   docker compose up -d postgres redis      -> so o essencial para desenvolver
+#   docker compose --profile evolution up -d -> sobe tambem o WhatsApp nao-oficial
+#   docker compose --profile app up -d       -> sobe a stack completa (api, worker, web)
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crm_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+      # Sem isso o Postgres cria o banco com locale C e a ordenacao de acentos fica errada.
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=pt-BR --encoding=UTF8'
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: crm_redis
+    restart: unless-stopped
+    # appendonly garante que a fila nao evapora se o container reiniciar.
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # Canal de contingencia (WhatsApp via QR Code). Só sobe com --profile evolution.
+  evolution:
+    image: atendai/evolution-api:v2.1.1
+    container_name: crm_evolution
+    restart: unless-stopped
+    profiles: ['evolution']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-change-me-evolution-key}
+      DATABASE_ENABLED: 'true'
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-crm_dev_password}@postgres:5432/evolution?schema=public
+      DATABASE_SAVE_DATA_INSTANCE: 'true'
+      DATABASE_SAVE_DATA_NEW_MESSAGE: 'false'
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      WEBHOOK_GLOBAL_ENABLED: 'false'
+      LOG_LEVEL: ERROR
+      DEL_INSTANCE: 'false'
+      QRCODE_LIMIT: '30'
+    ports:
+      - '${EVOLUTION_PORT:-8080}:8080'
+    volumes:
+      - evolution_instances:/evolution/instances
+
+  # IA local, custo zero. Só sobe com --profile ia
+  #   docker compose --profile ia up -d
+  #   docker compose exec ollama ollama pull qwen2.5:7b-instruct
+  ollama:
+    image: ollama/ollama:latest
+    container_name: crm_ollama
+    restart: unless-stopped
+    profiles: ['ia']
+    ports:
+      - '${OLLAMA_PORT:-11434}:11434'
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ['CMD-SHELL', 'ollama list || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Sem GPU o modelo roda na CPU: funciona, só responde mais devagar.
+    # Para usar GPU NVIDIA, descomente o bloco abaixo.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    container_name: crm_api
+    restart: unless-stopped
+    profiles: ['app']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-crm_dev_password}@postgres:5432/${POSTGRES_DB:-crm}?schema=public
+      REDIS_URL: redis://redis:6379/0
+      ROLE: api
+    ports:
+      - '${API_PORT:-3333}:3333'
+    volumes:
+      - media_storage:/app/storage
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3333/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    container_name: crm_worker
+    restart: unless-stopped
+    profiles: ['app']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-crm_dev_password}@postgres:5432/${POSTGRES_DB:-crm}?schema=public
+      REDIS_URL: redis://redis:6379/0
+      ROLE: worker
+    command: ['node', 'dist/worker.js']
+    volumes:
+      - media_storage:/app/storage
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3333}
+    container_name: crm_web
+    restart: unless-stopped
+    profiles: ['app']
+    depends_on:
+      - api
+    ports:
+      - '${WEB_PORT:-8081}:80'
+
+volumes:
+  ollama_models:
+  postgres_data:
+  redis_data:
+  evolution_instances:
+  media_storage:
