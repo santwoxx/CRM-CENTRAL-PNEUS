@@ -1,4 +1,12 @@
-export const API_BASE = '/api';
+/**
+ * Endereco da API.
+ *
+ * Em desenvolvimento usamos o caminho relativo "/api", que o proxy do Vite
+ * encaminha para localhost:3333. Em producao NAO existe proxy - o front esta
+ * num dominio (Vercel) e o backend em outro - entao a URL completa precisa
+ * vir de VITE_API_URL no momento do build.
+ */
+export const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') ?? '/api';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined | null>;

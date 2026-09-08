@@ -18,7 +18,11 @@ export function getSocket(token?: string | null): CrmSocket {
     socket = null;
   }
 
-  socket = io(window.location.origin, {
+  // Mesma logica do api.ts: em producao o backend esta em outro dominio,
+  // entao `window.location.origin` (o Vercel) apontaria para o lugar errado.
+  const origin = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') || window.location.origin;
+
+  socket = io(origin, {
     path: '/socket.io',
     auth: { token: authToken },
     transports: ['websocket', 'polling'],

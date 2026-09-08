@@ -16,3 +16,8 @@ storage/
 tmp/
 .turbo/
 packages/api/prisma/*.db
+
+# Artefatos de build do Vite que o tsc gera na raiz do pacote web
+packages/web/vite.config.js
+packages/web/vite.config.d.ts
+*.tsbuildinfo
