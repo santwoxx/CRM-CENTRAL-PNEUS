@@ -180,6 +180,12 @@ model User {
 
   isActive Boolean @default(true)
 
+  /// UID do Firebase quando a pessoa entra com a conta Google.
+  /// Guardamos o UID (e nao so o e-mail) porque o UID e imutavel: se alguem
+  /// trocar o e-mail da conta Google, o vinculo continua valendo, e um
+  /// e-mail reaproveitado por outra pessoa nao herda o acesso.
+  firebaseUid String? @unique
+
   /// Teto de conversas simultaneas. O roteador nunca ultrapassa este numero.
   maxConcurrentChats Int @default(5)
 

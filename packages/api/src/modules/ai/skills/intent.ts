@@ -66,7 +66,7 @@ const RULES: IntentRule[] = [
     patterns: [
       /\bpneu?s?\b/i,
       /\b(or[cç]ament\w*|cota[cç][aã]o|pre[cç]os?|quanto (custa|sai|fica|é|e)|valor(es)?)\b/i,
-      /\b(aro|medida|jogo de pneu|remold|recap)\b/i,
+      /\b(aro|medida|jogo|remold|recap|borracha)\b/i,
     ],
   },
   {

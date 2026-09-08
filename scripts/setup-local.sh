@@ -7,27 +7,47 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "==> 1/5 Verificando Docker"
-if ! docker info >/dev/null 2>&1; then
-  echo "ERRO: o Docker nao esta respondendo."
-  echo "      Abra o Docker Desktop e espere o icone ficar verde."
-  echo "      Se disser 'Virtualization support not detected', o WSL ainda"
-  echo "      nao foi ativado: reinicie o computador."
-  exit 1
+echo "==> 1/5 Procurando Postgres e Redis"
+
+# Dois caminhos possiveis. O nativo e preferido quando existe: no Windows o
+# Docker depende do WSL, que nem sempre sobe (em builds Insider chega a falhar
+# de vez). Servico nativo nao tem essa fragilidade.
+pg_ok=0
+redis_ok=0
+
+node -e "const n=require('net');const s=n.connect(5432,'127.0.0.1');s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)" 2>/dev/null && pg_ok=1
+node -e "const n=require('net');const s=n.connect(6379,'127.0.0.1');s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)" 2>/dev/null && redis_ok=1
+
+if [ "$pg_ok" = "1" ] && [ "$redis_ok" = "1" ]; then
+  echo "    Postgres e Redis ja respondendo (servicos nativos)"
+else
+  echo "    Nao encontrei os dois; tentando pelo Docker"
+  if ! docker info >/dev/null 2>&1; then
+    echo ""
+    echo "ERRO: nem servico nativo nem Docker disponivel."
+    echo ""
+    echo "  Opcao A (recomendada no Windows) - instalar nativo:"
+    echo "    winget install PostgreSQL.PostgreSQL.17 --custom \"--mode unattended --superpassword crm_dev_password\""
+    echo "    winget install Memurai.MemuraiDeveloper"
+    echo ""
+    echo "  Opcao B - Docker: abra o Docker Desktop e espere ficar verde."
+    echo "    Se disser 'Virtualization support not detected', o WSL nao subiu."
+    exit 1
+  fi
+
+  docker compose up -d postgres redis
+  echo "    Aguardando o banco aceitar conexao..."
+  for _ in $(seq 1 60); do
+    status=$(docker inspect --format='{{.State.Health.Status}}' crm_postgres 2>/dev/null || echo starting)
+    [ "$status" = "healthy" ] && break
+    sleep 2
+  done
+  [ "${status:-}" = "healthy" ] || { echo "ERRO: Postgres nao ficou saudavel."; exit 1; }
 fi
-echo "    Docker ok"
 
-echo "==> 2/5 Subindo Postgres e Redis"
-docker compose up -d postgres redis
-
-echo "    Aguardando o banco aceitar conexao..."
-for _ in $(seq 1 60); do
-  status=$(docker inspect --format='{{.State.Health.Status}}' crm_postgres 2>/dev/null || echo starting)
-  [ "$status" = "healthy" ] && break
-  sleep 2
-done
-[ "${status:-}" = "healthy" ] || { echo "ERRO: Postgres nao ficou saudavel a tempo."; exit 1; }
-echo "    Postgres pronto"
+echo "==> 2/5 Conferindo o banco de dados"
+node -e "const n=require('net');const s=n.connect(5432,'127.0.0.1');s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))"   || { echo "ERRO: Postgres nao responde na porta 5432"; exit 1; }
+echo "    ok"
 
 echo "==> 3/5 Aplicando o schema e populando o catalogo"
 npm run db:deploy

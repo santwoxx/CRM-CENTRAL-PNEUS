@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { changePasswordSchema, loginSchema, refreshSchema } from '@crm/shared';
-import { changePassword, login, logout, refresh } from './service.js';
+import { changePassword, login, loginWithGoogle, logout, refresh } from './service.js';
+import { isGoogleAuthConfigured } from './firebase.js';
 import { isProduction } from '../../env.js';
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
@@ -27,6 +28,44 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       user: result.user,
     });
   });
+
+  // Login com a conta Google (Firebase Authentication)
+  app.post('/google', async (req, reply) => {
+    const body = req.body as { idToken?: unknown } | null;
+    const idToken = typeof body?.idToken === 'string' ? body.idToken.trim() : '';
+
+    if (!idToken) {
+      return reply
+        .code(400)
+        .send({ error: { code: 'MISSING_ID_TOKEN', message: 'Token do Google ausente' } });
+    }
+
+    const result = await loginWithGoogle(idToken, {
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    reply.setCookie('refresh_token', result.refreshToken, {
+      path: '/auth/refresh',
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60,
+    });
+
+    return reply.send({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      expiresIn: result.expiresIn,
+      user: result.user,
+    });
+  });
+
+  // Diz ao frontend se deve exibir o botao do Google.
+  app.get('/providers', async () => ({
+    password: true,
+    google: isGoogleAuthConfigured(),
+  }));
 
   // Renovação de token de acesso
   app.post('/refresh', async (req, reply) => {

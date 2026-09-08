@@ -1,9 +1,11 @@
 import { UserRole, permissionsFor, type AuthenticatedUser } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
-import { hashPassword, verifyPassword } from '../../lib/crypto.js';
+import { hashPassword, randomToken, verifyPassword } from '../../lib/crypto.js';
 import { ForbiddenError, UnauthorizedError, ValidationError } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { recordAudit } from '../audit/service.js';
+import { env } from '../../env.js';
+import { verifyGoogleIdToken } from './firebase.js';
 import {
   REFRESH_TTL_MS,
   createRefreshToken,
@@ -329,5 +331,144 @@ export function toAuthenticatedUser(user: UserWithRelations): AuthenticatedUser 
     orgId: user.orgId,
     orgName: user.organization.name,
     permissions: permissionsFor(role),
+  };
+}
+
+/**
+ * Login com a conta Google.
+ *
+ * A decisao de seguranca central esta aqui: um token do Google valido prova
+ * QUEM a pessoa e, mas nao diz que ela pode entrar neste CRM. Por padrao,
+ * so entra quem o administrador ja cadastrou - o Google apenas substitui a
+ * senha. Sem essa regra, qualquer pessoa do planeta com uma conta Google
+ * teria acesso ao painel de atendimento.
+ *
+ * `GOOGLE_AUTO_PROVISION=true` afrouxa isso e cria o usuario como atendente
+ * no primeiro acesso. Serve para testes internos; em producao deve ficar
+ * desligado.
+ */
+export async function loginWithGoogle(
+  idToken: string,
+  context: AuthContext = {},
+): Promise<AuthResult> {
+  const identity = await verifyGoogleIdToken(idToken);
+
+  const userInclude = {
+    organization: { select: { id: true, name: true } },
+    departments: {
+      include: { department: { select: { id: true, name: true, color: true } } },
+    },
+  } as const;
+
+  // Procura primeiro pelo UID (imutavel) e so depois pelo e-mail, que e o
+  // caso de quem foi cadastrado pelo admin e esta entrando pela primeira vez.
+  let user = await prisma.user.findFirst({
+    where: { firebaseUid: identity.uid, deletedAt: null },
+    include: userInclude,
+  });
+
+  if (!user) {
+    user = await prisma.user.findFirst({
+      where: { email: identity.email, deletedAt: null },
+      include: userInclude,
+    });
+
+    if (user) {
+      // Primeiro login social de um usuario ja cadastrado: amarramos o UID.
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          firebaseUid: identity.uid,
+          ...(user.avatarUrl ? {} : { avatarUrl: identity.pictureUrl }),
+        },
+      });
+    }
+  }
+
+  if (!user) {
+    if (!env.GOOGLE_AUTO_PROVISION) {
+      throw new ForbiddenError(
+        `O e-mail ${identity.email} nao esta cadastrado. Peca ao administrador para criar seu acesso.`,
+        'USER_NOT_PROVISIONED',
+      );
+    }
+
+    const organization = await prisma.organization.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (!organization) {
+      throw new ForbiddenError('Nenhuma organizacao configurada', 'NO_ORGANIZATION');
+    }
+
+    const created = await prisma.user.create({
+      data: {
+        orgId: organization.id,
+        name: identity.name ?? identity.email.split('@')[0] ?? 'Usuario',
+        email: identity.email,
+        // Senha impossivel de adivinhar: quem entra pelo Google nao usa senha,
+        // mas o campo e obrigatorio e nao pode ficar previsivel.
+        passwordHash: await hashPassword(randomToken(32)),
+        role: UserRole.AGENT,
+        firebaseUid: identity.uid,
+        avatarUrl: identity.pictureUrl,
+      },
+      select: { id: true },
+    });
+
+    user = await prisma.user.findUniqueOrThrow({
+      where: { id: created.id },
+      include: userInclude,
+    });
+
+    logger.info({ userId: user.id, email: identity.email }, 'Usuario criado via login Google');
+  }
+
+  if (!user.isActive) {
+    throw new ForbiddenError('Usuario desativado. Fale com o administrador.', 'USER_INACTIVE');
+  }
+
+  const session = await prisma.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: user!.id },
+      data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
+    });
+
+    const { token, hash } = createRefreshToken();
+    const created = await tx.session.create({
+      data: {
+        userId: user!.id,
+        refreshTokenHash: hash,
+        expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent?.slice(0, 500) ?? null,
+      },
+    });
+
+    return { id: created.id, token };
+  });
+
+  await recordAudit({
+    orgId: user.orgId,
+    userId: user.id,
+    action: 'auth.login.google',
+    entity: 'User',
+    entityId: user.id,
+    ipAddress: context.ipAddress ?? null,
+    userAgent: context.userAgent ?? null,
+  });
+
+  const accessToken = await signAccessToken({
+    sub: user.id,
+    orgId: user.orgId,
+    role: user.role as UserRole,
+    sid: session.id,
+  });
+
+  return {
+    accessToken,
+    refreshToken: session.token,
+    expiresIn: 15 * 60,
+    user: toAuthenticatedUser(user),
   };
 }

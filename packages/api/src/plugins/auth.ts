@@ -40,6 +40,11 @@ export const authPlugin: FastifyPluginAsync = fp(async (fastify) => {
     if (
       url.startsWith('/auth/login') ||
       url.startsWith('/auth/refresh') ||
+      // Login social: o proprio token do Google e a credencial.
+      url.startsWith('/auth/google') ||
+      // Diz a tela de login quais formas de entrar existem. Nao expoe nada
+      // sensivel - apenas dois booleanos.
+      url.startsWith('/auth/providers') ||
       url.startsWith('/webhooks') ||
       url.startsWith('/health') ||
       (url.startsWith('/media') && request.method === 'GET')

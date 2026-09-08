@@ -84,6 +84,14 @@ const envSchema = z
     EVOLUTION_INSTANCE: z.string().default('central-pneus'),
     EVOLUTION_WEBHOOK_SECRET: z.string().default(''),
 
+    // --- Login com Google (Firebase Authentication) ---
+    // So o projectId e necessario: a verificacao usa as chaves publicas do
+    // Google, sem service account.
+    FIREBASE_PROJECT_ID: z.string().default(''),
+    // Quando true, um Google novo vira atendente automaticamente. Deixe FALSE
+    // em producao: senao qualquer pessoa com conta Google entra no CRM.
+    GOOGLE_AUTO_PROVISION: bool(false),
+
     AI_ENABLED: bool(true),
     // Padrao "ollama": roda na propria maquina, sem chave e sem custo.
     AI_PROVIDER: z

@@ -20,15 +20,16 @@
     "typecheck": "npm run typecheck -w @crm/shared && npm run typecheck -w @crm/api && npm run typecheck -w @crm/web",
     "lint": "eslint .",
     "test": "npm run test -w @crm/api",
-    "db:generate": "npm run db:generate -w @crm/api",
-    "db:migrate": "npm run db:migrate -w @crm/api",
-    "db:deploy": "npm run db:deploy -w @crm/api",
-    "db:seed": "npm run db:seed -w @crm/api",
-    "db:studio": "npm run db:studio -w @crm/api",
+    "db:generate": "prisma generate --schema packages/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema packages/api/prisma/schema.prisma",
+    "db:deploy": "prisma migrate deploy --schema packages/api/prisma/schema.prisma",
+    "db:seed": "tsx packages/api/prisma/seed.ts",
+    "db:studio": "prisma studio --schema packages/api/prisma/schema.prisma",
     "infra:up": "docker compose up -d postgres redis",
     "infra:down": "docker compose down",
     "infra:logs": "docker compose logs -f",
-    "setup": "npm install && npm run db:generate && npm run db:deploy && npm run db:seed"
+    "setup": "npm install && npm run db:generate && npm run db:deploy && npm run db:seed",
+    "db:push": "prisma db push --schema packages/api/prisma/schema.prisma"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

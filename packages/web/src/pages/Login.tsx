@@ -1,11 +1,21 @@
 import React, { useState } from 'react';
+import { isFirebaseConfigured } from '../services/firebase.js';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Lock, Mail, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore.js';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { login, isLoading, error } = useAuthStore();
+  const { login, loginWithGoogle, isLoading, error } = useAuthStore();
+
+  const handleGoogle = async () => {
+    try {
+      await loginWithGoogle();
+      navigate('/');
+    } catch {
+      // A mensagem ja foi para o `error` da store e aparece na tela.
+    }
+  };
 
   const [email, setEmail] = useState('admin@centralpneus.com.br');
   const [password, setPassword] = useState('AdminPassword123!');
@@ -97,6 +107,33 @@ export const LoginPage: React.FC = () => {
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        {/* Login com Google: so aparece quando o Firebase esta configurado no
+            build, para nao mostrar um botao que nao funciona. */}
+        {isFirebaseConfigured && (
+          <>
+            <div className="flex items-center gap-3 my-5">
+              <div className="h-px flex-1 bg-slate-800" />
+              <span className="text-[10px] uppercase tracking-wider text-slate-500">ou</span>
+              <div className="h-px flex-1 bg-slate-800" />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGoogle}
+              disabled={isLoading}
+              className="w-full bg-white hover:bg-slate-100 text-slate-800 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2.5 transition disabled:opacity-50"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.4a5.5 5.5 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.6-5.2 3.6-8.8z"/>
+                <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z"/>
+                <path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.3a12 12 0 0 0 0 10.8l4-3.1z"/>
+                <path fill="#EA4335" d="M12 4.8c1.8 0 3.4.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-5 6.7-5z"/>
+              </svg>
+              <span>Entrar com o Google</span>
+            </button>
+          </>
+        )}
 
         {/* Acesso Rápido de Demonstração */}
         <div className="mt-6 pt-5 border-t border-slate-800 text-center">

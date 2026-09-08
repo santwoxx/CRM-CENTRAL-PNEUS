@@ -114,3 +114,27 @@ describe('contexto da loja entregue a IA', () => {
     expect(result.contextBlock).toContain('R$ 99,00');
   });
 });
+
+/**
+ * Regressao encontrada testando contra o banco real: "quero um jogo de
+ * 195/65R15" caia em OTHER porque a frase nao contem "pneu" nem "preco".
+ * O cliente recebia uma resposta generica embora o codigo ja tivesse o
+ * preco em maos.
+ */
+describe('medida na mensagem implica cotacao', () => {
+  it('classifica como cotacao mesmo sem a palavra "pneu"', async () => {
+    findMany.mockResolvedValue([PNEU_P7]);
+
+    const result = await buildShopContext('org1', 'quero um jogo de 205/55R16');
+
+    expect(result.intent).toBe('TIRE_QUOTE');
+    expect(result.quantity).toBe(4);
+    expect(result.readyForHandoff).toBe(true);
+  });
+
+  it('uma saudacao seca continua sendo saudacao', async () => {
+    findMany.mockResolvedValue([]);
+    const result = await buildShopContext('org1', 'bom dia');
+    expect(result.intent).toBe('GREETING');
+  });
+});

@@ -37,8 +37,16 @@ export async function buildShopContext(
   orgId: string,
   text: string,
 ): Promise<ShopSkillResult> {
-  const intent = detectIntent(text);
+  let intent = detectIntent(text);
   const size = extractTireSize(text);
+
+  // Uma medida de pneu na mensagem JA E um pedido de orcamento, mesmo que a
+  // frase nao diga "pneu" nem "preco" - "quero um jogo de 195/65R15" e o
+  // caso tipico. Sem isto a conversa caia em OTHER e o cliente nao recebia a
+  // tabela de precos que o codigo ja tinha buscado.
+  if (size && (intent === ShopIntent.OTHER || intent === ShopIntent.GREETING)) {
+    intent = ShopIntent.TIRE_QUOTE;
+  }
   const rim = size ? null : extractRimOnly(text);
   const quantity = extractQuantity(text);
   const vehicle = extractVehicle(text);
