@@ -92,6 +92,10 @@ const envSchema = z
     // em producao: senao qualquer pessoa com conta Google entra no CRM.
     GOOGLE_AUTO_PROVISION: bool(false),
 
+    // Simulador de conversa: permite testar o CRM sem WhatsApp de verdade.
+    // Desligue em producao - ele cria conversas reais no banco.
+    SIMULATOR_ENABLED: bool(true),
+
     AI_ENABLED: bool(true),
     // Padrao "ollama": roda na propria maquina, sem chave e sem custo.
     AI_PROVIDER: z

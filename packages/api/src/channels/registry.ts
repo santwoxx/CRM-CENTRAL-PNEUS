@@ -7,6 +7,7 @@ import { emitChannelStatus } from '../realtime/emitter.js';
 import { EvolutionAdapter } from './evolution/adapter.js';
 import { parseWebhook as parseEvolutionWebhook } from './evolution/mapper.js';
 import { WhatsAppCloudAdapter } from './whatsapp-cloud/adapter.js';
+import { WebchatAdapter } from './webchat/adapter.js';
 import { parseWebhook as parseCloudWebhook } from './whatsapp-cloud/mapper.js';
 import type {
   ChannelAdapter,
@@ -55,6 +56,14 @@ export async function getAdapter(channelId: string): Promise<ChannelAdapter> {
   }
 
   const credentials = decryptJson<Record<string, string>>(channel.credentialsEncrypted);
+
+  // O canal interno nao tem credencial nenhuma para decifrar.
+  if (channel.type === ChannelType.WEBCHAT) {
+    const adapter = new WebchatAdapter(channel.id);
+    cache.set(channelId, { adapter, expiresAt: Date.now() + CACHE_TTL_MS });
+    return adapter;
+  }
+
   if (!credentials) {
     throw new AppError(
       'Credenciais do canal ausentes ou ilegiveis. Reconfigure o canal.',
@@ -79,6 +88,10 @@ function buildAdapter(
 
     case ChannelType.WHATSAPP_EVOLUTION:
       return new EvolutionAdapter(channelId, credentials as unknown as EvolutionCredentials);
+
+    // Canal interno: nao tem credencial nem provedor externo.
+    case ChannelType.WEBCHAT:
+      return new WebchatAdapter(channelId);
 
     default:
       throw new AppError(`Canal do tipo ${type} ainda nao tem adaptador`, {

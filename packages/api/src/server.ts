@@ -27,6 +27,7 @@ import { dashboardRoutes } from './modules/dashboard/routes.js';
 import { mediaRoutes } from './modules/media/routes.js';
 import { webhookRoutes } from './modules/webhooks/routes.js';
 import { healthRoutes } from './modules/health/routes.js';
+import { simulatorRoutes } from './modules/simulator/routes.js';
 
 async function buildServer() {
   const app = fastify({
@@ -67,6 +68,7 @@ async function buildServer() {
   await app.register(channelRoutes, { prefix: '/channels' });
   await app.register(aiRoutes, { prefix: '/ai' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
+  await app.register(simulatorRoutes, { prefix: '/simulator' });
   await app.register(mediaRoutes);
   await app.register(webhookRoutes, { prefix: '/webhooks' });
   await app.register(healthRoutes, { prefix: '/health' });

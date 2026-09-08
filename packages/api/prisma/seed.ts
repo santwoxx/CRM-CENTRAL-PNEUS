@@ -1,6 +1,7 @@
 import { PrismaClient, UserRole, AgentPresence, RoutingStrategy } from '@prisma/client';
 import { hashPassword } from '../src/lib/crypto.js';
 import { SEED_TIRES, SEED_SERVICES } from './data/tires.js';
+import { describeActiveProvider } from '../src/modules/ai/provider.js';
 import { DEFAULT_CENTRAL_PNEUS_PROMPT, DEFAULT_QUALIFICATION_GOALS } from '../src/modules/ai/persona.js';
 
 const prisma = new PrismaClient();
@@ -148,17 +149,23 @@ async function main() {
   });
 
   // 4. Persona da IA
+  const ativo = describeActiveProvider();
+
   await prisma.aiPersona.upsert({
     where: { id: 'seed-persona-central-pneus' },
-    update: {},
+    // Reexecutar o seed realinha a persona com o provedor configurado agora.
+    update: { provider: ativo.provider, model: ativo.chatModel },
     create: {
       id: 'seed-persona-central-pneus',
       orgId: org.id,
       name: 'Atendente Virtual Central Pneus',
       systemPrompt: DEFAULT_CENTRAL_PNEUS_PROMPT,
       greeting: 'Olá! Seja bem-vindo(a) à Central Pneus. Como podemos ajudar seu veículo hoje?',
-      provider: 'anthropic',
-      model: 'claude-sonnet-5',
+      // Segue o provedor do .env em vez de fixar um pago. Gravar "anthropic"
+      // aqui fazia toda conversa falhar por falta de credencial numa
+      // instalacao que roda IA local.
+      provider: ativo.provider,
+      model: ativo.chatModel,
       temperature: 0.4,
       maxTokens: 800,
       maxTurnsBeforeHandoff: 10,

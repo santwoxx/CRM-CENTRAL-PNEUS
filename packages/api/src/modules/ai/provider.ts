@@ -536,3 +536,43 @@ export function describeActiveProvider(): {
     configured: Boolean(profile.apiKey),
   };
 }
+
+/** true quando o provedor tem credencial (ou nao precisa de uma, como o local). */
+export function isProviderConfigured(provider: AiProviderName): boolean {
+  if (!PROVIDER_NAMES.includes(provider)) return false;
+  return Boolean(profileFor(provider).apiKey);
+}
+
+/**
+ * Reconcilia o provedor pedido pela persona com o que realmente existe.
+ *
+ * A persona fica no banco e pode ter sido gravada apontando para um provedor
+ * que ninguem configurou - foi exatamente o que aconteceu com uma persona
+ * salva como "anthropic" numa instalacao que roda Ollama local. Sem esta
+ * checagem, TODA conversa morria com "sem credencial" e ia para a fila humana,
+ * como se a IA nao existisse.
+ *
+ * Regra: a preferencia da persona vale enquanto for utilizavel; senao caimos
+ * para o provedor do .env. E quando trocamos de provedor, o modelo da persona
+ * tambem e descartado - um nome de modelo da Anthropic nao existe no Ollama.
+ */
+export function resolvePersonaProvider(
+  preferredProvider?: string | null,
+  preferredModel?: string | null,
+): { provider?: AiProviderName; model?: string } {
+  const wanted = (preferredProvider ?? '').trim() as AiProviderName;
+
+  if (wanted && isProviderConfigured(wanted)) {
+    return { provider: wanted, ...(preferredModel ? { model: preferredModel } : {}) };
+  }
+
+  if (wanted) {
+    logger.warn(
+      { personaProvider: wanted, fallback: env.AI_PROVIDER },
+      'Persona aponta para um provedor de IA sem credencial; usando o do .env',
+    );
+  }
+
+  // Sem provider/model: `generateCompletion` usa o que estiver no .env.
+  return {};
+}

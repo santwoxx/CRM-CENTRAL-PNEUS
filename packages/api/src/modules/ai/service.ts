@@ -11,8 +11,8 @@ import { queueAiMessage, queueSystemMessage } from '../messages/outbox.js';
 import { routeConversation } from '../routing/router.js';
 import {
   generateCompletion,
+  resolvePersonaProvider,
   type AiMessageInput,
-  type AiProviderName,
 } from './provider.js';
 import { getActivePersona } from './persona.js';
 import { evaluateFastTriggers, evaluateLeadWarmth } from './evaluator.js';
@@ -114,9 +114,13 @@ ${
   }
 
   try {
+    // A persona guarda uma PREFERENCIA de provedor; se ela nao estiver
+    // configurada nesta instalacao, caimos para o provedor do .env em vez de
+    // derrubar a conversa para a fila humana.
+    const escolha = resolvePersonaProvider(persona.provider, persona.model);
+
     const aiResult = await generateCompletion(aiMessages, {
-      provider: persona.provider as AiProviderName,
-      model: persona.model,
+      ...escolha,
       temperature: persona.temperature,
       maxTokens: persona.maxTokens,
     });
