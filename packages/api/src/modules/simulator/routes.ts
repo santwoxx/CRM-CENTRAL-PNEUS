@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import type { MessageType } from '@crm/shared';
 import { env } from '../../env.js';
 import { ForbiddenError } from '../../lib/errors.js';
 import {
@@ -19,7 +20,11 @@ import {
 const simulateSchema = z.object({
   phone: z.string().trim().min(8).max(20),
   name: z.string().trim().max(120).optional(),
-  text: z.string().trim().min(1).max(2000),
+  // Vazio e valido para midia: um audio nao tem legenda.
+  text: z.string().trim().max(2000).default(''),
+  type: z
+    .enum(['TEXT', 'AUDIO', 'IMAGE', 'VIDEO', 'DOCUMENT'])
+    .default('TEXT'),
 });
 
 export const simulatorRoutes: FastifyPluginAsync = async (app) => {
@@ -38,6 +43,7 @@ export const simulatorRoutes: FastifyPluginAsync = async (app) => {
       phone: input.phone,
       name: input.name,
       text: input.text,
+      type: input.type as MessageType,
     });
 
     return reply.send(result);

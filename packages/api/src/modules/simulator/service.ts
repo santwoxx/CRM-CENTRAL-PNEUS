@@ -67,6 +67,11 @@ export interface SimulateInput {
   /** Nome que aparece para o atendente. */
   name?: string;
   text: string;
+  /**
+   * Tipo da mensagem. Serve para testar o desvio de midia: audio, foto e
+   * afins nao passam pela IA, vao direto para um humano.
+   */
+  type?: MessageType;
 }
 
 export async function simulateInboundMessage(input: SimulateInput): Promise<{
@@ -81,8 +86,11 @@ export async function simulateInboundMessage(input: SimulateInput): Promise<{
     ]);
   }
 
+  const type = input.type ?? MessageType.TEXT;
   const text = input.text.trim();
-  if (!text) {
+
+  // Midia nao precisa de texto (um audio nao tem legenda).
+  if (!text && type === MessageType.TEXT) {
     throw new ValidationError('Mensagem vazia', [
       { path: 'text', message: 'Escreva algo para o cliente enviar' },
     ]);
@@ -97,8 +105,13 @@ export async function simulateInboundMessage(input: SimulateInput): Promise<{
     phone,
     pushName: input.name?.trim() || null,
     timestamp: new Date(),
-    type: MessageType.TEXT,
-    content: text,
+    type,
+    content: text || null,
+    // A midia simulada nao tem arquivo: o que se testa aqui e a DECISAO de
+    // desviar para um humano, nao o download do anexo.
+    ...(type !== MessageType.TEXT
+      ? { media: { externalId: `sim_media_${createId()}`, mimeType: mimePara(type) } }
+      : {}),
   };
 
   const result = await processInboundMessage(
@@ -236,4 +249,19 @@ export async function resetSimulatedContact(orgId: string, phone: string): Promi
   await prisma.contact.delete({ where: { id: contact.id } });
   logger.info({ phone: normalized }, 'Contato de simulacao removido');
   return true;
+}
+
+
+/** Mime type plausivel para a midia simulada. */
+function mimePara(type: MessageType): string {
+  switch (type) {
+    case MessageType.AUDIO:
+      return 'audio/ogg';
+    case MessageType.IMAGE:
+      return 'image/jpeg';
+    case MessageType.VIDEO:
+      return 'video/mp4';
+    default:
+      return 'application/pdf';
+  }
 }

@@ -1,4 +1,5 @@
 import { PrismaClient, UserRole, AgentPresence, RoutingStrategy } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
 import { hashPassword } from '../src/lib/crypto.js';
 import { SEED_TIRES, SEED_SERVICES } from './data/tires.js';
 import { describeActiveProvider } from '../src/modules/ai/provider.js';
@@ -210,6 +211,25 @@ async function main() {
       },
     });
   }
+
+  // 6b. Dono da conta (entra pelo Google).
+  //     Existe no banco porque o login social NAO cria usuario sozinho:
+  //     o Google prova quem a pessoa e, o cadastro daqui e que autoriza.
+  await prisma.user.upsert({
+    where: { orgId_email: { orgId: org.id, email: 'brisasofc@gmail.com' } },
+    update: { role: UserRole.OWNER, isActive: true },
+    create: {
+      orgId: org.id,
+      name: 'Rhuan (Dono)',
+      email: 'brisasofc@gmail.com',
+      // Senha aleatoria: quem entra pelo Google nunca a usa, mas o campo e
+      // obrigatorio e nao pode ficar previsivel.
+      passwordHash: await hashPassword(randomBytes(24).toString('base64url')),
+      role: UserRole.OWNER,
+      maxConcurrentChats: 10,
+      presence: AgentPresence.OFFLINE,
+    },
+  });
 
   // 7. Catálogo de pneus e serviços da loja.
   //    A IA só cita preços que existirem aqui; sem catálogo ela é instruída

@@ -16,6 +16,7 @@ import { whatsappWindowExpiry } from '../../lib/time.js';
 import { enqueueAi, enqueueMedia, enqueueRouting } from '../../queue/queues.js';
 import { HandoffReason } from '@crm/shared';
 import { resolveContact } from '../contacts/resolver.js';
+import { queueSystemMessage } from './outbox.js';
 import {
   conversationInclude,
   messageInclude,
@@ -296,7 +297,28 @@ async function decideNextAction(
     return;
   }
 
+  /**
+   * Qualquer coisa que nao seja texto vai direto para um humano.
+   *
+   * O modelo que roda aqui le TEXTO. Ele nao ouve audio nem enxerga imagem.
+   * Sem este desvio, o cliente manda um audio e a IA responde no vazio, como
+   * se nada tivesse chegado - o pior tipo de falha, porque parece que
+   * funcionou.
+   *
+   * Nao transcrevemos de proposito: transcricao de audio de WhatsApp erra
+   * justamente em numero, e numero aqui e medida de pneu. Um "205" virando
+   * "215" custa a venda e a viagem do cliente. Um atendente ouve em cinco
+   * segundos e resolve.
+   *
+   * Vale tambem para foto: a IA pede a imagem da lateral do pneu, e quem le
+   * a medida nela e a pessoa.
+   */
   if (conversation.status === ConversationStatus.BOT && conversation.aiControlled) {
+    if (incoming.type !== MessageType.TEXT) {
+      await handoffForMedia(conversation, incoming.type);
+      return;
+    }
+
     await enqueueAi({ conversationId, triggerMessageId: messageId });
     return;
   }
@@ -453,4 +475,48 @@ export async function processStatusUpdate(
   }
 
   return true;
+}
+
+
+/** Rotulo do que o cliente enviou, para o aviso sair natural. */
+const ROTULO_MIDIA: Partial<Record<MessageType, string>> = {
+  [MessageType.AUDIO]: 'seu áudio',
+  [MessageType.IMAGE]: 'sua foto',
+  [MessageType.VIDEO]: 'seu vídeo',
+  [MessageType.DOCUMENT]: 'seu arquivo',
+  [MessageType.LOCATION]: 'sua localização',
+  [MessageType.CONTACTS]: 'o contato',
+  [MessageType.STICKER]: 'sua figurinha',
+};
+
+/**
+ * Tira a IA da conversa e chama um humano porque chegou algo que ela nao le.
+ * O aviso ao cliente e curto e nao pede desculpa: ele fez tudo certo.
+ */
+async function handoffForMedia(
+  conversation: { id: string; orgId: string },
+  type: MessageType,
+): Promise<void> {
+  await prisma.conversation.update({
+    where: { id: conversation.id },
+    data: { aiControlled: false },
+  });
+
+  await prisma.conversationEvent.create({
+    data: {
+      conversationId: conversation.id,
+      type: ConversationEventType.AI_HANDOFF,
+      data: { motivo: 'midia-recebida', tipo: type },
+    },
+  });
+
+  const rotulo = ROTULO_MIDIA[type] ?? 'sua mensagem';
+  await queueSystemMessage(conversation.id, `Recebi ${rotulo}! Já vou chamar um consultor. 👍`);
+
+  await enqueueRouting({ conversationId: conversation.id, reason: HandoffReason.AI_UNCERTAIN });
+
+  logger.info(
+    { conversationId: conversation.id, tipo: type },
+    'Midia recebida: conversa entregue a um humano sem passar pela IA',
+  );
 }
