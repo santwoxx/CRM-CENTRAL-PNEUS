@@ -58,11 +58,26 @@ export const spaPlugin = fp(async (app: FastifyInstance) => {
 
   await app.register(fastifyStatic, {
     root: webDist,
-    // Nao usamos wildcard: o fallback abaixo cuida das rotas do React.
-    wildcard: false,
+    /**
+     * `wildcard: true` (padrao) e obrigatorio aqui.
+     *
+     * Com `wildcard: false` o plugin varre a pasta UMA VEZ, no boot, e cria
+     * uma rota por arquivo encontrado. Recompilar o painel com o servidor no
+     * ar gera nomes com hash novo, que nao estao naquela lista: o pedido do
+     * .js cai no fallback e volta o index.html, com MIME text/html. O
+     * navegador recusa o modulo e a tela fica em branco - sem erro no
+     * servidor, o que torna a causa dificil de achar.
+     *
+     * Com wildcard, o arquivo e resolvido no momento do pedido e o rebuild
+     * passa a valer na hora.
+     */
+    wildcard: true,
     // Os assets tem hash no nome, entao podem ser cacheados para sempre.
     maxAge: '1y',
-    index: false,
+    // Com `index: false`, um pedido a "/" cai na pasta e o static responde
+    // 403. Apontar o index resolve a raiz; as rotas do React continuam indo
+    // para o fallback, porque nao existem como arquivo.
+    index: ['index.html'],
   });
 
   /**

@@ -53,7 +53,20 @@ Get-Process cloudflared -EA SilentlyContinue | Stop-Process -Force -EA SilentlyC
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" -EA SilentlyContinue |
     Where-Object { $_.CommandLine -match 'tsx watch|dist[\/](server|worker)' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
-Start-Sleep -Seconds 3
+
+# Encerrar por linha de comando nem sempre pega o processo certo: o node que
+# realmente segura a porta pode ser um filho. Sem isto o servidor novo morre
+# com EADDRINUSE e quem continua respondendo e a versao ANTIGA - com o painel
+# desatualizado, o que e dificil de perceber.
+Get-NetTCPConnection -LocalPort 3333 -State Listen -EA SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force -EA SilentlyContinue }
+Start-Sleep -Seconds 4
+
+if (Get-NetTCPConnection -LocalPort 3333 -State Listen -EA SilentlyContinue) {
+    Write-Host "  a porta 3333 continua ocupada - feche o processo manualmente" -ForegroundColor Red
+    exit 1
+}
 Write-Host "  ok" -ForegroundColor Green
 
 Write-Host "`n[4/5] Subindo API e worker" -ForegroundColor Cyan
