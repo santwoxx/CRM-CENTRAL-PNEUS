@@ -1,0 +1,37 @@
+rules_version = '2';
+
+// ===========================================================================
+// Central Pneus - regras do Firestore
+//
+// LEIA ANTES DE MUDAR
+//
+// Este CRM NAO usa o Firestore. Contatos, conversas, mensagens, usuarios,
+// cargos e catalogo vivem todos no PostgreSQL, e quem autoriza cada acao e o
+// backend (Fastify + a matriz de permissoes em @crm/shared).
+//
+// O Firebase entra aqui com UMA funcao: provar quem e a pessoa no login com
+// Google. Ele nunca decide o que ela pode fazer.
+//
+// Por que entao existir este arquivo:
+//
+//   Ao ativar o Firestore, o Console oferece o "modo de teste", que libera
+//   leitura e escrita para QUALQUER pessoa da internet por 30 dias. Um banco
+//   aberto no seu projeto e um risco real mesmo sem uso - qualquer um pode
+//   gravar lixo ali, e voce paga por isso.
+//
+//   Negar tudo fecha essa porta. Se um dia o sistema passar a usar o
+//   Firestore, estas regras mudam junto com o codigo, nao antes.
+//
+// Para aplicar:
+//   Console do Firebase > Firestore Database > Regras > cole e Publique.
+// ===========================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Nada entra, nada sai. O CRM nao le nem grava aqui.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

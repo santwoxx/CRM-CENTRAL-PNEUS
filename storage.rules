@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// ===========================================================================
+// Central Pneus - regras do Firebase Storage
+//
+// Mesma situacao do Firestore: o CRM nao guarda nada aqui. Audios, fotos e
+// documentos que o cliente manda pelo WhatsApp ficam no armazenamento da
+// propria aplicacao (STORAGE_DRIVER no .env), servidos pela rota /media com
+// autenticacao.
+//
+// Negar tudo evita deixar um bucket aberto no projeto sem necessidade.
+// ===========================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
