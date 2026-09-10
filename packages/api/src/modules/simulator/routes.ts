@@ -2,7 +2,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../../env.js';
 import { ForbiddenError } from '../../lib/errors.js';
-import { simulateInboundMessage } from './service.js';
+import {
+  getSimulatedConversation,
+  resetSimulatedContact,
+  simulateInboundMessage,
+} from './service.js';
 
 /**
  * Rotas do simulador.
@@ -37,6 +41,20 @@ export const simulatorRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.send(result);
+  });
+
+  // A conversa como o cliente a veria no celular dele.
+  app.get('/conversation', async (req, reply) => {
+    const query = req.query as { phone?: string };
+    const view = await getSimulatedConversation(req.user.orgId, query.phone ?? '');
+    return reply.send(view);
+  });
+
+  // Zera o contato para recomecar a demonstracao do zero.
+  app.post('/reset', async (req, reply) => {
+    const body = req.body as { phone?: string };
+    const removed = await resetSimulatedContact(req.user.orgId, body?.phone ?? '');
+    return reply.send({ removed });
   });
 
   // Roteiro pronto para demonstrar o sistema em 4 mensagens.

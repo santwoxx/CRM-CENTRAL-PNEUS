@@ -1,17 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import {
-  MessageSquare,
-  Activity,
-  Layers,
-  Users,
-  Radio,
-  Cpu,
-  LogOut,
-  Circle,
-  AlertCircle,
-  ChevronDown,
-} from 'lucide-react';
+import { MessageSquare, Activity, Layers, Users, Radio, Cpu, LogOut, Circle, AlertCircle, ChevronDown, Smartphone } from 'lucide-react';
 import { AgentPresence, UserRole } from '@crm/shared';
 import { useAuthStore } from '../stores/authStore.js';
 import { usePresenceStore } from '../stores/presenceStore.js';
@@ -183,6 +172,20 @@ export const NavigationSidebar: React.FC = () => {
               >
                 <Radio className="w-5 h-5" />
                 <span>Canais WhatsApp</span>
+              </NavLink>
+
+              <NavLink
+                to="/simulador"
+                className={({ isActive }) =>
+                  `flex items-center space-x-3 px-3 py-2.5 rounded-xl transition ${
+                    isActive
+                      ? 'bg-brand-600 text-white shadow-md shadow-brand-600/20'
+                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+                  }`
+                }
+              >
+                <Smartphone className="w-5 h-5" />
+                <span>Simulador</span>
               </NavLink>
 
               <NavLink

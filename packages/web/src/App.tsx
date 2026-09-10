@@ -12,6 +12,7 @@ import { DepartmentsPage } from './pages/DepartmentsPage.js';
 import { TeamPage } from './pages/TeamPage.js';
 import { ChannelsPage } from './pages/ChannelsPage.js';
 import { AiConfigPage } from './pages/AiConfigPage.js';
+import { SimulatorPage } from './pages/SimulatorPage.js';
 
 export const App: React.FC = () => {
   const { user, token, isLoading, checkAuth } = useAuthStore();
@@ -54,6 +55,7 @@ export const App: React.FC = () => {
           <Route path="/equipe" element={<TeamPage />} />
           <Route path="/canais" element={<ChannelsPage />} />
           <Route path="/ia" element={<AiConfigPage />} />
+          <Route path="/simulador" element={<SimulatorPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

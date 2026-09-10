@@ -1,4 +1,4 @@
-import { ChannelStatus, ChannelType, MessageType, normalizePhone } from '@crm/shared';
+import { ChannelStatus, ChannelType, MessageType, normalizePhone, phoneVariants } from '@crm/shared';
 import { createId } from '@paralleldrive/cuid2';
 import { prisma } from '../../db/prisma.js';
 import { logger } from '../../lib/logger.js';
@@ -116,4 +116,124 @@ export async function simulateInboundMessage(input: SimulateInput): Promise<{
   );
 
   return result;
+}
+
+export interface SimulatedConversationView {
+  conversationId: string | null;
+  status: string | null;
+  department: string | null;
+  assignedTo: string | null;
+  aiControlled: boolean;
+  intent: string | null;
+  leadScore: number | null;
+  /** O que o extrator leu da conversa: medida, quantidade, veiculo. */
+  detected: Record<string, unknown>;
+  messages: {
+    id: string;
+    from: 'cliente' | 'ia' | 'atendente' | 'sistema';
+    author: string | null;
+    text: string;
+    status: string;
+    at: string;
+  }[];
+}
+
+/**
+ * A conversa como o CLIENTE a veria no celular dele.
+ *
+ * Filtra notas internas de proposito: elas existem no historico da equipe,
+ * mas o cliente nunca as recebe - e a tela de simulacao precisa mostrar
+ * exatamente o que chega no WhatsApp dele, senao a demonstracao mente.
+ */
+export async function getSimulatedConversation(
+  orgId: string,
+  phone: string,
+): Promise<SimulatedConversationView> {
+  const normalized = normalizePhone(phone);
+  const vazio: SimulatedConversationView = {
+    conversationId: null,
+    status: null,
+    department: null,
+    assignedTo: null,
+    aiControlled: false,
+    intent: null,
+    leadScore: null,
+    detected: {},
+    messages: [],
+  };
+
+  if (!normalized) return vazio;
+
+  const contact = await prisma.contact.findFirst({
+    where: { orgId, phone: { in: phoneVariants(normalized) } },
+    select: { id: true },
+  });
+  if (!contact) return vazio;
+
+  const conversation = await prisma.conversation.findFirst({
+    where: { contactId: contact.id },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      department: { select: { name: true } },
+      assignedUser: { select: { name: true } },
+      messages: {
+        where: { isPrivate: false },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          content: true,
+          senderType: true,
+          status: true,
+          createdAt: true,
+          sender: { select: { name: true } },
+        },
+      },
+    },
+  });
+  if (!conversation) return vazio;
+
+  const origem: Record<string, SimulatedConversationView['messages'][number]['from']> = {
+    CONTACT: 'cliente',
+    AI: 'ia',
+    AGENT: 'atendente',
+    SYSTEM: 'sistema',
+  };
+
+  const metadata = (conversation.metadata ?? {}) as { shop?: Record<string, unknown> };
+
+  return {
+    conversationId: conversation.id,
+    status: conversation.status,
+    department: conversation.department?.name ?? null,
+    assignedTo: conversation.assignedUser?.name ?? null,
+    aiControlled: conversation.aiControlled,
+    intent: conversation.intent,
+    leadScore: conversation.leadScore,
+    detected: metadata.shop ?? {},
+    messages: conversation.messages.map((message) => ({
+      id: message.id,
+      from: origem[message.senderType] ?? 'sistema',
+      author: message.sender?.name ?? null,
+      text: message.content ?? '',
+      status: message.status,
+      at: message.createdAt.toISOString(),
+    })),
+  };
+}
+
+/** Apaga a conversa simulada para recomecar o teste do zero. */
+export async function resetSimulatedContact(orgId: string, phone: string): Promise<boolean> {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return false;
+
+  const contact = await prisma.contact.findFirst({
+    where: { orgId, phone: { in: phoneVariants(normalized) } },
+    select: { id: true },
+  });
+  if (!contact) return false;
+
+  // Em cascata: conversas, mensagens e eventos saem junto com o contato.
+  await prisma.contact.delete({ where: { id: contact.id } });
+  logger.info({ phone: normalized }, 'Contato de simulacao removido');
+  return true;
 }

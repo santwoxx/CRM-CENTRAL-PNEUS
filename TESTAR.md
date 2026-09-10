@@ -18,40 +18,46 @@ para compartilhar. Deixe a janela aberta.
 | `mariana@centralpneus.com.br` | `Atendente123!` | Atendente — Financeiro |
 | `roberto@centralpneus.com.br` | `Atendente123!` | Atendente — Oficina |
 
-## O que dá para testar sem WhatsApp
+## Como testar: cliente mandando mensagem
 
-O simulador injeta mensagens no **mesmo caminho** de um WhatsApp real:
-resolução de contato, leitura da medida, consulta ao catálogo, resposta da
-IA, fila e distribuição para atendente.
+Entre no painel e clique em **Simulador** no menu lateral.
 
-```bash
-# 1. autentique
-TOKEN=$(curl -s -X POST <LINK>/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@centralpneus.com.br","password":"AdminPassword123!"}' \
-  | python -c "import sys,json;print(json.load(sys.stdin)['accessToken'])")
+A tela tem duas partes:
 
-# 2. mande uma mensagem como se fosse um cliente
-curl -X POST <LINK>/api/simulator/message \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-  -d '{"phone":"31999998888","name":"Cliente Teste","text":"Quanto custa o pneu 205/55R16?"}'
-```
+- **Esquerda — o celular do cliente.** Escreva ali como se fosse o cliente no
+  WhatsApp. As respostas da IA, do atendente e do sistema aparecem na hora.
+- **Direita — o que o sistema entendeu.** Mostra a medida que ele leu, a
+  quantidade, o veículo, a intenção, a nota do lead, o setor e quem assumiu.
 
-Roteiro pronto de demonstração: `GET <LINK>/api/simulator/roteiro`
+Há botões com mensagens prontas; clicar já envia.
 
-### Mensagens que mostram bem o sistema
+> A mensagem percorre exatamente o mesmo caminho de um WhatsApp real:
+> resolução de contato, leitura da medida, consulta ao catálogo, resposta da
+> IA, fila e distribuição. A única diferença é que nada sai para a internet.
 
-| Mensagem | O que acontece |
+### Roteiro que mostra bem o sistema
+
+| Escreva | O que deve acontecer |
 |---|---|
-| `Quanto custa 205/55R16?` | Lê a medida e responde com preço e estoque reais |
-| `Quero um jogo de 195/65R15` | Entende "jogo" = 4 e calcula o total |
-| `Meu pneu está com bolha` | Trata como segurança e manda para a Oficina |
+| `Bom dia! Vocês têm pneu 205/55 R16?` | Responde com preço e estoque **reais** do catálogo |
+| `Quero um jogo de 195/65R15` | Entende que "jogo" são 4 e soma o total |
+| `Meu carro é aro 16, tem pneu?` | Pede a medida completa — aro sozinho não orça |
+| `Meu pneu está com uma bolha na lateral` | Trata como segurança e manda para a Oficina |
 | `Quero falar com o financeiro` | Transfere direto, sem passar pela IA |
-| `Meu carro é aro 16` | Pede a medida completa (aro sozinho não orça) |
+| `Quanto custa alinhamento?` | Traz a tabela de serviços |
 
-Para ver a distribuição funcionando, entre com um atendente em outro
-navegador e coloque-o como **online**: a conversa sai da fila e cai na tela
-dele em tempo real.
+O ícone de recarregar, no topo do celular, apaga o contato e recomeça do zero.
+Trocar o número de telefone cria um cliente diferente.
+
+### Vendo a distribuição funcionar
+
+1. Abra o painel em **outro navegador** (ou aba anônima) e entre como
+   `carlos@centralpneus.com.br` / `Atendente123!`
+2. Deixe o status dele como **online**
+3. Volte ao simulador e mande uma mensagem
+
+A conversa sai da fila e cai na tela do Carlos em tempo real. É assim que
+funciona com WhatsApp de verdade — só o transporte muda.
 
 ## Pontos que você precisa saber
 
