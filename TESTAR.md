@@ -59,6 +59,29 @@ Trocar o número de telefone cria um cliente diferente.
 A conversa sai da fila e cai na tela do Carlos em tempo real. É assim que
 funciona com WhatsApp de verdade — só o transporte muda.
 
+## Limpando as conversas de teste
+
+O simulador cria conversas de verdade no banco. Para zerar:
+
+```bash
+npm run limpar-simulador
+```
+
+Ele apaga **somente** o canal interno (Simulador / Webchat). Conversa de
+WhatsApp — oficial ou de contingência — nunca é tocada, nem por engano, nem
+se alguém rodar isso com o sistema em produção.
+
+Contatos são removidos só quando existiam apenas no simulador. Quem também
+conversou pelo WhatsApp fica, porque o cadastro dele é real.
+
+Usuários, setores, catálogo e configuração não são afetados.
+
+> Feche o Simulador no navegador antes de rodar. Com a tela aberta e alguém
+> mandando mensagem, uma conversa nova nasce logo depois da limpeza.
+
+Para apagar **uma** conversa específica, o botão vermelho **Apagar** no topo
+dela faz isso (só administrador).
+
 ## Pontos que você precisa saber
 
 **O link muda a cada reinício.** O túnel gratuito sorteia um endereço novo.

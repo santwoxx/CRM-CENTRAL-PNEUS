@@ -30,7 +30,8 @@
     "infra:logs": "docker compose logs -f",
     "setup": "npm install && npm run db:generate && npm run db:deploy && npm run db:seed",
     "db:push": "prisma db push --schema packages/api/prisma/schema.prisma",
-    "acessos": "tsx packages/api/src/scripts/sincronizar-acessos.ts"
+    "acessos": "tsx packages/api/src/scripts/sincronizar-acessos.ts",
+    "limpar-simulador": "tsx packages/api/src/scripts/limpar-simulador.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
