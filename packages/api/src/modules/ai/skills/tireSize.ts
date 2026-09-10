@@ -245,3 +245,46 @@ export function extractPartialSize(text: string): PartialTireSize | null {
 
   return null;
 }
+
+/** O cliente tentou informar a medida, mas o que veio nao fecha. */
+export interface SizeAttempt {
+  /** `missing-profile`: veio largura e aro, faltou o numero do meio. */
+  kind: 'missing-profile';
+  width: number;
+  rim: number;
+  /** O que ele digitou, para citar de volta sem reescrever. */
+  raw: string;
+}
+
+/**
+ * Detecta uma medida MAL formada - o caso "175/13".
+ *
+ * POR QUE ISSO PRECISA EXISTIR
+ *
+ * "175/13" nao e medida completa nem parcial: 13 esta fora da faixa de
+ * perfil (25 a 95). Sem tratar, todos os extratores devolviam vazio e o
+ * sistema ficava CEGO para o que o cliente acabou de escrever - a IA entao
+ * respondia qualquer coisa, sem relacao com a mensagem.
+ *
+ * Mas 13 e um aro perfeitamente valido. A leitura provavel e que o cliente
+ * pulou o perfil (o numero do meio) e escreveu largura e aro. Sabendo disso,
+ * da para pedir exatamente o que falta em vez de recomecar do zero.
+ */
+export function extractSizeAttempt(text: string): SizeAttempt | null {
+  if (!text) return null;
+  if (extractTireSize(text) || extractPartialSize(text)) return null;
+
+  const match = /(?<!\d)(\d{3})\s*[\/\-\s]\s*(\d{2}(?:[.,]5)?)(?!\d)/.exec(text);
+  if (!match) return null;
+
+  const width = Number(match[1]);
+  const second = Number((match[2] ?? '').replace(',', '.'));
+
+  const larguraValida = width >= LIMITS.width.min && width <= LIMITS.width.max;
+  // Segundo numero cabe como ARO mas nao como perfil: faltou o do meio.
+  const pareceAro = second >= LIMITS.rim.min && second < LIMITS.aspectRatio.min;
+
+  if (!larguraValida || !pareceAro || !isValidRim(second)) return null;
+
+  return { kind: 'missing-profile', width, rim: second, raw: match[0].trim() };
+}

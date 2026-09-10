@@ -147,3 +147,33 @@ describe('medida incompleta (sem aro)', () => {
     expect(extractPartialSize('bom dia')).toBeNull();
   });
 });
+
+/**
+ * "175/13" apareceu num teste real e quebrou a conversa: nenhum extrator
+ * reconhecia, o sistema ficava cego para a mensagem e a IA respondia algo
+ * sem relacao com o que o cliente tinha escrito.
+ */
+describe('medida mal formada', () => {
+  it('entende que 175/13 e largura e aro, faltando o perfil', async () => {
+    const { extractSizeAttempt } = await import('../modules/ai/skills/tireSize.js');
+
+    const tentativa = extractSizeAttempt('175/13');
+    expect(tentativa?.kind).toBe('missing-profile');
+    expect(tentativa?.width).toBe(175);
+    expect(tentativa?.rim).toBe(13);
+  });
+
+  it('nao dispara quando a medida ja e valida', async () => {
+    const { extractSizeAttempt } = await import('../modules/ai/skills/tireSize.js');
+
+    expect(extractSizeAttempt('205/55R16')).toBeNull();
+    expect(extractSizeAttempt('175/70')).toBeNull();
+  });
+
+  it('ignora numeros que nao sao tentativa de medida', async () => {
+    const { extractSizeAttempt } = await import('../modules/ai/skills/tireSize.js');
+
+    expect(extractSizeAttempt('bom dia')).toBeNull();
+    expect(extractSizeAttempt('999/99')).toBeNull();
+  });
+});

@@ -3,10 +3,12 @@ import { describeOffer, findServices, findTiresByRim, findTiresBySize, formatBRL
 import { ShopIntent, detectIntent, extractVehicle } from './intent.js';
 import {
   extractPartialSize,
+  extractSizeAttempt,
   extractQuantity,
   extractRimOnly,
   extractTireSize,
   type PartialTireSize,
+  type SizeAttempt,
   type TireSize,
 } from './tireSize.js';
 
@@ -31,6 +33,8 @@ export interface ShopSkillResult {
   size: TireSize | null;
   /** Largura e perfil sem o aro. Nunca completar por conta propria. */
   partial: PartialTireSize | null;
+  /** Medida mal formada, ex.: "175/13" (largura e aro, sem o perfil). */
+  attempt: SizeAttempt | null;
   rim: number | null;
   quantity: number | null;
   vehicle: string | null;
@@ -59,11 +63,14 @@ export async function buildShopContext(
   // Medida sem aro ("175/70"). Tratada a parte porque, sem isso, o modelo
   // completa o numero sozinho e inventa um aro que ninguem informou.
   const partial = size ? null : extractPartialSize(text);
-  const rim = size || partial ? null : extractRimOnly(text);
+  // Tentativa mal formada ("175/13"): sem isto, nenhum extrator reconhece e o
+  // sistema fica cego para o que o cliente acabou de escrever.
+  const attempt = size || partial ? null : extractSizeAttempt(text);
+  const rim = size || partial || attempt ? null : extractRimOnly(text);
   const quantity = extractQuantity(text);
 
   // Medida parcial tambem e pedido de orcamento.
-  if (partial && (intent === ShopIntent.OTHER || intent === ShopIntent.GREETING)) {
+  if ((partial || attempt) && (intent === ShopIntent.OTHER || intent === ShopIntent.GREETING)) {
     intent = ShopIntent.TIRE_QUOTE;
   }
   const vehicle = extractVehicle(text);
@@ -73,6 +80,7 @@ export async function buildShopContext(
     intent,
     ...(size ? { tireSize: size.formatted, tireSizeKey: size.key } : {}),
     ...(partial ? { partialSize: partial.formatted } : {}),
+    ...(attempt ? { sizeAttempt: attempt.raw } : {}),
     ...(rim ? { rim } : {}),
     ...(quantity ? { quantity } : {}),
     ...(vehicle ? { vehicle } : {}),
@@ -118,6 +126,15 @@ export async function buildShopContext(
         `A medida dele NAO e "${partial.formatted} R13" nem nenhum outro aro - voce nao sabe qual e.`,
         'Pergunte o aro numa frase curta e ofereca a foto da lateral do pneu como alternativa.',
         'NAO cite preco ainda.',
+      );
+    } else if (attempt) {
+      // Diz a IA exatamente o que o cliente escreveu e o que falta, para ela
+      // responder AQUILO em vez de mandar uma frase generica.
+      lines.push(
+        `O cliente escreveu "${attempt.raw}".`,
+        `Isso parece largura ${attempt.width} e aro ${attempt.rim}, faltando o numero do MEIO (o perfil).`,
+        'Confirme o que ele mandou e peca so o numero do meio, que fica entre os dois na lateral do pneu.',
+        'NAO peca a medida toda de novo e NAO cite preco.',
       );
     } else if (rim) {
       const offers = await findTiresByRim(orgId, rim, { limit: 4 });
@@ -166,6 +183,7 @@ export async function buildShopContext(
     intent,
     size,
     partial,
+    attempt,
     rim,
     quantity,
     vehicle,
