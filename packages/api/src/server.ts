@@ -4,11 +4,13 @@ import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import { env } from './env.js';
+import { isApiPath } from './lib/routes.js';
 import { logger } from './lib/logger.js';
 import { checkDatabase, disconnectDatabase } from './db/prisma.js';
 import { checkRedis, disconnectRedis } from './lib/redis.js';
 import { errorsPlugin } from './plugins/errors.js';
 import { authPlugin } from './plugins/auth.js';
+import { spaPlugin } from './plugins/spa.js';
 import { setupSocketServer } from './realtime/server.js';
 import { unsubscribeRealtime } from './realtime/bus.js';
 import { closeQueues, registerRepeatableJobs } from './queue/queues.js';
@@ -33,6 +35,28 @@ async function buildServer() {
   const app = fastify({
     loggerInstance: logger,
     disableRequestLogging: env.LOG_LEVEL !== 'debug' && env.LOG_LEVEL !== 'trace',
+
+    /**
+     * Aceita as chamadas de API tambem sob o prefixo /api.
+     *
+     * O painel servido pelo proprio backend chama /api/auth/login (mesma
+     * origem). O proxy do Vite em desenvolvimento faz o mesmo. Ja um
+     * frontend hospedado a parte, com VITE_API_URL absoluta, chama a raiz.
+     * Removendo o prefixo aqui - antes do roteamento - as tres formas caem
+     * nas mesmas rotas, sem duplicar nada.
+     */
+    rewriteUrl(request) {
+      const url = request.url ?? '/';
+      if (url !== '/api' && !url.startsWith('/api/')) return url;
+
+      const stripped = url.slice(4) || '/';
+      const candidate = stripped.startsWith('/') ? stripped : `/${stripped}`;
+
+      // So removemos o prefixo quando sobra uma rota de API de verdade.
+      // Assim /api/inexistente continua sendo /api/inexistente e termina em
+      // 404 JSON, em vez de virar /inexistente e receber o index.html.
+      return isApiPath(candidate) ? candidate : url;
+    },
   });
 
   // Plugins essenciais
@@ -72,6 +96,9 @@ async function buildServer() {
   await app.register(mediaRoutes);
   await app.register(webhookRoutes, { prefix: '/webhooks' });
   await app.register(healthRoutes, { prefix: '/health' });
+
+  // Por ultimo: o painel so responde onde nenhuma rota de API respondeu.
+  await app.register(spaPlugin);
 
   // Gateway Socket.IO acoplado ao servidor HTTP do Fastify
   setupSocketServer(app.server);

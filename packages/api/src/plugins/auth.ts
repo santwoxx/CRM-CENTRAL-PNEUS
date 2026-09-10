@@ -1,4 +1,5 @@
 import fp from 'fastify-plugin';
+import { isApiPath } from '../lib/routes.js';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import '@fastify/cookie';
 import { Permission, can, canAny, type AuthenticatedUser, type UserRole } from '@crm/shared';
@@ -47,6 +48,10 @@ export const authPlugin: FastifyPluginAsync = fp(async (fastify) => {
       url.startsWith('/auth/providers') ||
       url.startsWith('/webhooks') ||
       url.startsWith('/health') ||
+      // Navegacao do painel: qualquer GET que nao seja rota de API e uma
+      // pagina do React (ou um arquivo estatico) e precisa chegar ao
+      // navegador sem token - a tela de login e uma delas.
+      (request.method === 'GET' && !isApiPath(url)) ||
       (url.startsWith('/media') && request.method === 'GET')
     ) {
       return;
