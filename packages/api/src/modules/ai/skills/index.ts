@@ -1,7 +1,14 @@
 import { logger } from '../../../lib/logger.js';
 import { describeOffer, findServices, findTiresByRim, findTiresBySize, formatBRL } from './catalog.js';
 import { ShopIntent, detectIntent, extractVehicle } from './intent.js';
-import { extractQuantity, extractRimOnly, extractTireSize, type TireSize } from './tireSize.js';
+import {
+  extractPartialSize,
+  extractQuantity,
+  extractRimOnly,
+  extractTireSize,
+  type PartialTireSize,
+  type TireSize,
+} from './tireSize.js';
 
 export * from './tireSize.js';
 export * from './intent.js';
@@ -22,6 +29,8 @@ export * from './catalog.js';
 export interface ShopSkillResult {
   intent: ShopIntent;
   size: TireSize | null;
+  /** Largura e perfil sem o aro. Nunca completar por conta propria. */
+  partial: PartialTireSize | null;
   rim: number | null;
   quantity: number | null;
   vehicle: string | null;
@@ -47,14 +56,23 @@ export async function buildShopContext(
   if (size && (intent === ShopIntent.OTHER || intent === ShopIntent.GREETING)) {
     intent = ShopIntent.TIRE_QUOTE;
   }
-  const rim = size ? null : extractRimOnly(text);
+  // Medida sem aro ("175/70"). Tratada a parte porque, sem isso, o modelo
+  // completa o numero sozinho e inventa um aro que ninguem informou.
+  const partial = size ? null : extractPartialSize(text);
+  const rim = size || partial ? null : extractRimOnly(text);
   const quantity = extractQuantity(text);
+
+  // Medida parcial tambem e pedido de orcamento.
+  if (partial && (intent === ShopIntent.OTHER || intent === ShopIntent.GREETING)) {
+    intent = ShopIntent.TIRE_QUOTE;
+  }
   const vehicle = extractVehicle(text);
 
   const lines: string[] = [];
   const facts: Record<string, unknown> = {
     intent,
     ...(size ? { tireSize: size.formatted, tireSizeKey: size.key } : {}),
+    ...(partial ? { partialSize: partial.formatted } : {}),
     ...(rim ? { rim } : {}),
     ...(quantity ? { quantity } : {}),
     ...(vehicle ? { vehicle } : {}),
@@ -93,6 +111,14 @@ export async function buildShopContext(
         );
         facts.offersFound = 0;
       }
+    } else if (partial) {
+      // Sem o aro nao existe produto a consultar, entao nao tocamos o catalogo.
+      lines.push(
+        `O cliente informou ${partial.formatted}, SEM o aro.`,
+        `A medida dele NAO e "${partial.formatted} R13" nem nenhum outro aro - voce nao sabe qual e.`,
+        'Pergunte o aro numa frase curta e ofereca a foto da lateral do pneu como alternativa.',
+        'NAO cite preco ainda.',
+      );
     } else if (rim) {
       const offers = await findTiresByRim(orgId, rim, { limit: 4 });
       if (offers.length > 0) {
@@ -139,6 +165,7 @@ export async function buildShopContext(
   return {
     intent,
     size,
+    partial,
     rim,
     quantity,
     vehicle,

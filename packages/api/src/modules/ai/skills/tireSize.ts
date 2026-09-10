@@ -198,3 +198,50 @@ export function extractQuantity(text: string): number | null {
 
   return null;
 }
+
+/** Medida sem o aro: o cliente disse "175/70" e parou ai. */
+export interface PartialTireSize {
+  width: number;
+  aspectRatio: number;
+  /** "175/70" - propositalmente SEM aro, para nao induzir a um palpite. */
+  formatted: string;
+}
+
+/**
+ * Detecta medida incompleta (largura e perfil, sem o aro).
+ *
+ * POR QUE ISSO IMPORTA MAIS DO QUE PARECE
+ *
+ * "175/70" e uma das formas mais comuns de o cliente responder, e sem tratar
+ * esse caso o modelo de linguagem completa o numero sozinho - vimos ele
+ * escrever "175/70 R13" quando o cliente nunca disse R13. Isso e pior do que
+ * nao entender: o cliente confirma, compra, e recebe o pneu errado.
+ *
+ * Reconhecendo a medida parcial explicitamente, conseguimos dizer a IA
+ * exatamente o que falta e proibir o palpite.
+ */
+export function extractPartialSize(text: string): PartialTireSize | null {
+  if (!text) return null;
+
+  // Se ja existe medida completa, nao ha nada de parcial a tratar.
+  if (extractTireSize(text)) return null;
+
+  // Largura/perfil que NAO sao seguidos de um aro.
+  const pattern = /(?<!\d)(\d{3})\s*[\/\-]\s*(\d{2})(?!\s*[\/\-]?\s*[rR]?\s*\d)/g;
+
+  for (const match of text.matchAll(pattern)) {
+    const width = Number(match[1]);
+    const aspectRatio = Number(match[2]);
+
+    if (
+      width >= LIMITS.width.min &&
+      width <= LIMITS.width.max &&
+      aspectRatio >= LIMITS.aspectRatio.min &&
+      aspectRatio <= LIMITS.aspectRatio.max
+    ) {
+      return { width, aspectRatio, formatted: `${width}/${aspectRatio}` };
+    }
+  }
+
+  return null;
+}

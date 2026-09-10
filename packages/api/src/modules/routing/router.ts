@@ -475,7 +475,7 @@ async function maybeSendQueueNotice(
   const isOpen = isWithinBusinessHours(businessHours);
 
   const text = isOpen
-    ? 'Nossos atendentes estao finalizando outros atendimentos. Voce esta na fila e sera atendido em instantes.'
+    ? 'Só um instante que um consultor já te responde. 😊'
     : (result.department?.offlineMessage ??
       'Recebemos sua mensagem fora do horario de atendimento. Retornaremos assim que abrirmos.');
 

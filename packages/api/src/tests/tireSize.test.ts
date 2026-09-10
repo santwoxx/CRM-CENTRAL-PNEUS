@@ -114,3 +114,36 @@ describe('classificacao de intencao', () => {
     expect(detectIntent('quanto custa 205/55R16')).toBe('TIRE_QUOTE');
   });
 });
+
+/**
+ * Medida incompleta. Existe porque o modelo completava o numero sozinho:
+ * o cliente escrevia "175/70" e a resposta saia com "175/70 R13", um aro
+ * que ninguem informou. Cliente confirma, compra e recebe o pneu errado.
+ */
+describe('medida incompleta (sem aro)', () => {
+  it('reconhece largura e perfil sem inventar o aro', async () => {
+    const { extractPartialSize } = await import('../modules/ai/skills/tireSize.js');
+
+    const parcial = extractPartialSize('175/70');
+    expect(parcial?.formatted).toBe('175/70');
+    expect(parcial).not.toHaveProperty('rim');
+
+    expect(extractPartialSize('tenho 205/55 no carro')?.formatted).toBe('205/55');
+    expect(extractPartialSize('é 195-65 mesmo')?.formatted).toBe('195/65');
+  });
+
+  it('nao dispara quando a medida esta completa', async () => {
+    const { extractPartialSize } = await import('../modules/ai/skills/tireSize.js');
+
+    for (const completa of ['175/70R13', '175/70 13', '175/70/13', '2055516']) {
+      expect(extractPartialSize(completa), `entrada: ${completa}`).toBeNull();
+    }
+  });
+
+  it('ignora numeros que nao sao medida', async () => {
+    const { extractPartialSize } = await import('../modules/ai/skills/tireSize.js');
+
+    expect(extractPartialSize('meu cpf 123/45')).toBeNull();
+    expect(extractPartialSize('bom dia')).toBeNull();
+  });
+});

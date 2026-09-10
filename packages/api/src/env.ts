@@ -126,9 +126,14 @@ const envSchema = z
     OPENAI_API_KEY: z.string().default(''),
     OPENAI_CHAT_MODEL: z.string().default('gpt-4.1-mini'),
     OPENAI_ANALYSIS_MODEL: z.string().default('gpt-4.1'),
-    AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(64).max(8192).default(800),
+    // 220 tokens = ~2 a 3 frases. Limitar aqui e mais confiavel do que
+    // pedir brevidade no prompt: o modelo simplesmente nao tem espaco
+    // para escrever o texto longo e burocratico que produzia antes.
+    AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(64).max(8192).default(220),
     AI_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.4),
-    AI_MAX_TURNS_BEFORE_HANDOFF: z.coerce.number().int().min(1).max(50).default(12),
+    // Quem procura pneu no WhatsApp esta pedindo preco em varias lojas ao
+    // mesmo tempo. Cinco idas e vindas ja e mais do que a maioria tolera.
+    AI_MAX_TURNS_BEFORE_HANDOFF: z.coerce.number().int().min(1).max(50).default(5),
     AI_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(200),
 
     IDLE_CONVERSATION_MINUTES: z.coerce.number().int().min(1).default(30),

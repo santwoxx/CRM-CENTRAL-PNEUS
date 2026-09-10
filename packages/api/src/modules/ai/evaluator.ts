@@ -1,4 +1,10 @@
 import { HandoffReason } from '@crm/shared';
+import {
+  extractPartialSize,
+  extractQuantity,
+  extractRimOnly,
+  extractTireSize,
+} from './skills/tireSize.js';
 
 /**
  * Avaliador de aquecimento do lead e gatilhos de transbordo (Handoff).
@@ -97,8 +103,16 @@ export function evaluateFastTriggers(
 }
 
 /**
- * Avalia se as respostas do cliente já contêm dados suficientes para o lead estar AQUECIDO.
- * Por exemplo: medidas de pneus (175/70r13, 205/55/16, aro 16, etc.) e quantidade ou modelo do carro.
+ * Decide se o lead ja esta quente o bastante para um humano assumir.
+ *
+ * A leitura da medida usa o MESMO extrator do resto do sistema. Antes havia
+ * uma regex propria aqui, mais frouxa, e as duas discordavam: o extrator
+ * oficial recusava "175/70" por falta de aro enquanto esta dava por
+ * completa - foi assim que "R13" apareceu num resumo sem ninguem ter dito.
+ *
+ * O limiar e baixo de proposito. Quem procura pneu no WhatsApp compara preco
+ * em tres lojas ao mesmo tempo; cada pergunta a mais da IA e uma chance a
+ * mais de o cliente desistir. Tendo a medida, um vendedor fecha melhor.
  */
 export function evaluateLeadWarmth(
   messages: { content: string | null; direction: string }[],
@@ -108,36 +122,37 @@ export function evaluateLeadWarmth(
     .map((m) => m.content as string)
     .join(' ');
 
-  const tireSizeRegex = /\b\d{3}\s*[\/\-]?\s*\d{2}\s*[rR]?\s*\d{2}\b/; // ex: 205/55R16 ou 175 70 13
-  const rimRegex = /\baro\s*\d{2}\b/i; // ex: aro 15, aro 16
-  const quantityRegex = /\b(1|2|3|4|quatro|dois|duas|par|jogo)\s*(pneus?|unidades?)?\b/i;
+  const size = extractTireSize(customerTexts);
+  const partial = size ? null : extractPartialSize(customerTexts);
+  const rim = size || partial ? null : extractRimOnly(customerTexts);
+  const quantity = extractQuantity(customerTexts);
 
   let score = 20;
   const features: string[] = [];
 
-  if (tireSizeRegex.test(customerTexts)) {
-    score += 40;
-    const match = customerTexts.match(tireSizeRegex);
-    features.push(`Medida informada: ${match?.[0]}`);
-  } else if (rimRegex.test(customerTexts)) {
+  if (size) {
+    // Medida completa: nao ha mais o que a IA precise descobrir.
+    score += 60;
+    features.push(`Medida: ${size.formatted}`);
+  } else if (partial) {
+    // Falta so o aro. Registramos a medida PARCIAL, sem completar.
+    score += 30;
+    features.push(`Medida parcial: ${partial.formatted} (falta o aro)`);
+  } else if (rim) {
     score += 25;
-    const match = customerTexts.match(rimRegex);
-    features.push(`Aro informado: ${match?.[0]}`);
+    features.push(`Aro ${rim}`);
   }
 
-  if (quantityRegex.test(customerTexts)) {
-    score += 20;
-    features.push('Quantidade/interesse especificado');
-  }
-
-  if (customerTexts.length > 50) {
+  if (quantity) {
     score += 15;
+    features.push(`${quantity} unidade(s)`);
   }
 
-  const isWarm = score >= 60;
+  score = Math.min(100, score);
+
   return {
-    isWarm,
-    score: Math.min(100, score),
-    summary: features.length > 0 ? features.join(', ') : 'Cliente colhendo informações iniciais.',
+    isWarm: score >= 60,
+    score,
+    summary: features.length > 0 ? features.join(' · ') : 'Cliente colhendo informações iniciais.',
   };
 }
