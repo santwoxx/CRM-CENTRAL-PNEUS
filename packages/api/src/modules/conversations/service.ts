@@ -1,11 +1,15 @@
 import {
   ConversationEventType,
   ConversationStatus,
+  Room,
   UserRole,
   type ListConversationsQuery,
 } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { logger } from '../../lib/logger.js';
+import { recordAudit } from '../audit/service.js';
+import { publishRealtime } from '../../realtime/bus.js';
 import { conversationInclude, toConversationDetail, toConversationSummary } from './serializer.js';
 import { emitConversationUpdated } from '../../realtime/emitter.js';
 import { routeConversation, transferConversation } from '../routing/router.js';
@@ -183,4 +187,73 @@ export async function toggleAiControlled(conversationId: string, orgId: string, 
   const summary = toConversationSummary(updated);
   await emitConversationUpdated(orgId, summary);
   return summary;
+}
+
+/**
+ * Apaga uma conversa e todo o historico dela.
+ *
+ * Reservado ao administrador (Permission.CONVERSATION_DELETE) porque e
+ * irreversivel: mensagens, eventos e anexos vao junto, em cascata. Existe
+ * sobretudo para limpar conversas de teste antes de colocar o sistema em
+ * uso real.
+ *
+ * O contato NAO e apagado - ele pode ter outras conversas e um historico
+ * comercial proprio. Apagar o cadastro junto seria destruir mais do que se
+ * pediu.
+ */
+export async function deleteConversation(
+  conversationId: string,
+  orgId: string,
+  actorUserId: string,
+): Promise<{ deleted: true; conversationId: string }> {
+  const conversation = await prisma.conversation.findFirst({
+    where: { id: conversationId, orgId },
+    select: {
+      id: true,
+      contactId: true,
+      departmentId: true,
+      assignedUserId: true,
+      status: true,
+      contact: { select: { name: true, phone: true } },
+      _count: { select: { messages: true } },
+    },
+  });
+
+  if (!conversation) throw new NotFoundError('Conversa');
+
+  // Registra ANTES de apagar: depois nao havera de onde tirar estes dados.
+  await recordAudit({
+    orgId,
+    userId: actorUserId,
+    action: 'conversation.deleted',
+    entity: 'Conversation',
+    entityId: conversationId,
+    before: {
+      contactName: conversation.contact.name,
+      contactPhone: conversation.contact.phone,
+      status: conversation.status,
+      messageCount: conversation._count.messages,
+    },
+  });
+
+  await prisma.conversation.delete({ where: { id: conversationId } });
+
+  // Tira a conversa da tela de quem estava olhando.
+  await publishRealtime(
+    [
+      Room.conversation(conversationId),
+      Room.orgAdmin(orgId),
+      ...(conversation.departmentId ? [Room.department(conversation.departmentId)] : []),
+      ...(conversation.assignedUserId ? [Room.user(conversation.assignedUserId)] : []),
+    ],
+    'conversation:removed',
+    { conversationId, reason: 'excluida-pelo-administrador' },
+  );
+
+  logger.warn(
+    { conversationId, actorUserId, messageCount: conversation._count.messages },
+    'Conversa excluida pelo administrador',
+  );
+
+  return { deleted: true, conversationId };
 }

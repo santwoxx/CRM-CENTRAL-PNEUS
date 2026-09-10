@@ -12,6 +12,7 @@ export const InboxPage: React.FC = () => {
     conversations,
     setConversations,
     activeConversationId,
+    setActiveConversationId,
     isContactInfoOpen,
   } = useChatStore();
 
@@ -60,6 +61,12 @@ export const InboxPage: React.FC = () => {
           conversationId={activeConversationId}
           departments={departments}
           onRefreshList={loadData}
+          onConversationDeleted={() => {
+            // A conversa deixou de existir: fecha o painel para nao ficar
+            // exibindo mensagens de algo que ja foi apagado.
+            setActiveConversationId(null);
+            loadData();
+          }}
         />
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center bg-slate-950 p-8 text-center select-none text-slate-500">

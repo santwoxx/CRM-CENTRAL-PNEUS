@@ -14,16 +14,9 @@ import {
   Zap,
   Image as ImageIcon,
   File,
+  Trash2,
 } from 'lucide-react';
-import {
-  ConversationStatus,
-  MessageDirection,
-  MessageSenderType,
-  MessageStatus,
-  MessageType,
-  type ConversationDetail,
-  type MessageDTO,
-} from '@crm/shared';
+import { ConversationStatus, MessageDirection, MessageSenderType, MessageStatus, MessageType, type ConversationDetail, type MessageDTO, Permission } from '@crm/shared';
 import { api } from '../services/api.js';
 import { useAuthStore } from '../stores/authStore.js';
 import { useChatStore } from '../stores/chatStore.js';
@@ -34,6 +27,8 @@ interface ChatAreaProps {
   conversationId: string;
   departments: { id: string; name: string; color: string }[];
   onRefreshList?: () => void;
+  /** Avisa a tela para fechar a conversa aberta apos a exclusao. */
+  onConversationDeleted?: (conversationId: string) => void;
 }
 
 const QUICK_REPLIES = [
@@ -68,8 +63,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   conversationId,
   departments,
   onRefreshList,
+  onConversationDeleted,
 }) => {
   const { user } = useAuthStore();
+
+  // A permissao vem do backend junto com o usuario; ADMIN e OWNER a possuem.
+  // Esconder o botao e conveniencia - quem autoriza de fato e o servidor.
+  const podeExcluir = user?.permissions?.includes(Permission.CONVERSATION_DELETE) ?? false;
   const {
     messages,
     setMessages,
@@ -150,6 +150,32 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       onRefreshList?.();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  /**
+   * Excluir a conversa (somente administrador).
+   *
+   * Pede confirmacao digitada, e nao um simples "ok": a operacao apaga todo o
+   * historico e nao tem volta. Um clique acidental num botao ao lado de
+   * "Finalizar" custaria caro demais.
+   */
+  const handleDelete = async () => {
+    const nome = conversation?.contact?.name || conversation?.contact?.phone || 'esta conversa';
+    const resposta = window.prompt(
+      `Isto apaga PERMANENTEMENTE a conversa de ${nome} e todas as mensagens dela.
+
+` +
+        'Digite APAGAR para confirmar:',
+    );
+    if (resposta?.trim().toUpperCase() !== 'APAGAR') return;
+
+    try {
+      await api.delete(`/conversations/${conversationId}`);
+      onRefreshList?.();
+      onConversationDeleted?.(conversationId);
+    } catch (err: any) {
+      window.alert(err?.message ?? 'Nao foi possivel apagar a conversa.');
     }
   };
 
@@ -309,6 +335,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             >
               <CheckCircle2 className="w-4 h-4" />
               <span className="hidden md:inline">Finalizar</span>
+            </button>
+          )}
+
+          {/* Excluir: so quem tem a permissao ve o botao. O backend confere
+              de novo - a interface esconde, ela nao autoriza. */}
+          {podeExcluir && (
+            <button
+              onClick={handleDelete}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-red-950/70 border border-red-700/50 hover:bg-red-900/60 text-red-300 text-xs font-medium transition"
+              title="Apagar a conversa e todo o historico (irreversivel)"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span className="hidden md:inline">Apagar</span>
             </button>
           )}
 

@@ -17,6 +17,7 @@ import {
   resolve,
   toggleAiControlled,
   transfer,
+  deleteConversation,
 } from './service.js';
 import { conversationInclude, toConversationSummary } from './serializer.js';
 import { emitConversationUpdated } from '../../realtime/emitter.js';
@@ -88,6 +89,19 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
       input.sendClosingMessage,
     );
 
+    return reply.send(result);
+  });
+
+  /**
+   * Excluir a conversa e todo o historico dela.
+   *
+   * `CONVERSATION_DELETE` pertence apenas a ADMIN e OWNER (ver a matriz em
+   * @crm/shared). Atendente e supervisor recebem 403 - a operacao e
+   * irreversivel e apaga mensagens que sao registro do atendimento.
+   */
+  app.delete<{ Params: { id: string } }>('/:id', async (req, reply) => {
+    req.authorize(Permission.CONVERSATION_DELETE);
+    const result = await deleteConversation(req.params.id, req.user.orgId, req.user.id);
     return reply.send(result);
   });
 
