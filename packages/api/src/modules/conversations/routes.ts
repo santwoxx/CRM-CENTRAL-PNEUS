@@ -21,6 +21,7 @@ import {
 } from './service.js';
 import { conversationInclude, toConversationSummary } from './serializer.js';
 import { emitConversationUpdated } from '../../realtime/emitter.js';
+import { assertConversationAccess } from './access.js';
 
 export const conversationRoutes: FastifyPluginAsync = async (app) => {
   // Listar conversas com filtros
@@ -32,6 +33,10 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
       req.user.orgId,
       {
         id: req.user.id,
+        // `orgId` faz parte do sujeito: `canAccessConversation` compara a
+        // organizacao antes de tudo. Sem ele a comparacao era contra
+        // undefined e NENHUMA conversa passava no filtro.
+        orgId: req.user.orgId,
         role: req.user.role,
         departmentIds: req.user.departments.map((d) => d.id),
       },
@@ -44,7 +49,12 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
   // Detalhes da conversa
   app.get<{ Params: { id: string } }>('/:id', async (req, reply) => {
     req.authorize(Permission.CONVERSATION_VIEW_OWN);
-    const conversation = await getConversation(req.params.id, req.user.orgId);
+    const conversation = await getConversation(req.params.id, {
+      id: req.user.id,
+      orgId: req.user.orgId,
+      role: req.user.role,
+      departmentIds: req.user.departments.map((department) => department.id),
+    });
     return reply.send(conversation);
   });
 
@@ -55,8 +65,28 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
 
     if (isAssigningSelf) {
       req.authorize(Permission.CONVERSATION_ASSIGN_SELF);
+      await assertConversationAccess(
+        {
+          id: req.user.id,
+          orgId: req.user.orgId,
+          role: req.user.role,
+          departmentIds: req.user.departments.map((department) => department.id),
+        },
+        req.params.id,
+        'claim',
+      );
     } else {
       req.authorize(Permission.CONVERSATION_ASSIGN_OTHERS);
+      await assertConversationAccess(
+        {
+          id: req.user.id,
+          orgId: req.user.orgId,
+          role: req.user.role,
+          departmentIds: req.user.departments.map((department) => department.id),
+        },
+        req.params.id,
+        'manage',
+      );
     }
 
     const result = await assignConversation(req.params.id, input.userId, req.user.id);
@@ -66,6 +96,16 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
   // Transferir conversa para outro atendente ou setor
   app.post<{ Params: { id: string } }>('/:id/transfer', async (req, reply) => {
     req.authorize(Permission.CONVERSATION_TRANSFER);
+    await assertConversationAccess(
+      {
+        id: req.user.id,
+        orgId: req.user.orgId,
+        role: req.user.role,
+        departmentIds: req.user.departments.map((department) => department.id),
+      },
+      req.params.id,
+      'manage',
+    );
     const input = transferConversationSchema.parse(req.body);
 
     const result = await transfer(req.params.id, req.user.id, {
@@ -80,6 +120,16 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
   // Finalizar conversa
   app.post<{ Params: { id: string } }>('/:id/resolve', async (req, reply) => {
     req.authorize(Permission.CONVERSATION_RESOLVE);
+    await assertConversationAccess(
+      {
+        id: req.user.id,
+        orgId: req.user.orgId,
+        role: req.user.role,
+        departmentIds: req.user.departments.map((department) => department.id),
+      },
+      req.params.id,
+      'manage',
+    );
     const input = resolveConversationSchema.parse(req.body);
 
     const result = await resolve(
@@ -101,6 +151,16 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
    */
   app.delete<{ Params: { id: string } }>('/:id', async (req, reply) => {
     req.authorize(Permission.CONVERSATION_DELETE);
+    await assertConversationAccess(
+      {
+        id: req.user.id,
+        orgId: req.user.orgId,
+        role: req.user.role,
+        departmentIds: req.user.departments.map((department) => department.id),
+      },
+      req.params.id,
+      'manage',
+    );
     const result = await deleteConversation(req.params.id, req.user.orgId, req.user.id);
     return reply.send(result);
   });
@@ -108,6 +168,16 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
   // Alternar controle da IA (ligar ou desligar robô na conversa)
   app.put<{ Params: { id: string }; Body: { aiControlled: boolean } }>('/:id/ai', async (req, reply) => {
     req.authorize(Permission.CONVERSATION_REPLY);
+    await assertConversationAccess(
+      {
+        id: req.user.id,
+        orgId: req.user.orgId,
+        role: req.user.role,
+        departmentIds: req.user.departments.map((department) => department.id),
+      },
+      req.params.id,
+      'reply',
+    );
     const { aiControlled } = req.body;
     const result = await toggleAiControlled(req.params.id, req.user.orgId, aiControlled);
     return reply.send(result);
@@ -116,6 +186,16 @@ export const conversationRoutes: FastifyPluginAsync = async (app) => {
   // Atualizar propriedades da conversa (prioridade, tags, assunto)
   app.put<{ Params: { id: string } }>('/:id', async (req, reply) => {
     req.authorize(Permission.CONVERSATION_REPLY);
+    await assertConversationAccess(
+      {
+        id: req.user.id,
+        orgId: req.user.orgId,
+        role: req.user.role,
+        departmentIds: req.user.departments.map((department) => department.id),
+      },
+      req.params.id,
+      'reply',
+    );
     const input = updateConversationSchema.parse(req.body);
 
     const conversation = await prisma.conversation.findFirst({

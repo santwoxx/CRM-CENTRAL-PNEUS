@@ -13,6 +13,7 @@ import { logger } from '../lib/logger.js';
 import { prisma } from '../db/prisma.js';
 import { verifyAccessToken } from '../modules/auth/tokens.js';
 import { isSessionActive } from '../modules/auth/service.js';
+import { canAccessConversation } from '../modules/conversations/access.js';
 import {
   registerConnection,
   unregisterConnection,
@@ -101,17 +102,41 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     const snapshot = await getPresenceSnapshot(orgId);
     socket.emit('presence:snapshot', snapshot);
 
+    // IDs autorizados neste socket. Isso impede que um cliente envie eventos
+    // de digitacao para uma sala que ele nunca teve permissao de abrir.
+    const subscribedConversationIds = new Set<string>();
+
     // 3. Eventos do cliente
     socket.on('conversation:subscribe', async (conversationId, ack) => {
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, orgId },
+        select: { id: true, orgId: true, departmentId: true, assignedUserId: true },
+      });
+
+      if (
+        !conversation ||
+        // `id`, nao `userId`: e o nome do campo em ConversationAccessSubject.
+        // Com a chave errada, `subject.id` ficava undefined e a comparacao com
+        // `assignedUserId` nunca batia - o atendente era barrado da PROPRIA
+        // conversa. O `as never` que estava aqui escondia isso do compilador.
+        !canAccessConversation({ id: userId, orgId, role, departmentIds }, conversation, 'view')
+      ) {
+        ack?.({ ok: false, error: 'Sem acesso a esta conversa' });
+        return;
+      }
+
       await socket.join(Room.conversation(conversationId));
+      subscribedConversationIds.add(conversationId);
       ack?.({ ok: true });
     });
 
     socket.on('conversation:unsubscribe', async (conversationId) => {
       await socket.leave(Room.conversation(conversationId));
+      subscribedConversationIds.delete(conversationId);
     });
 
     socket.on('typing:start', (conversationId) => {
+      if (!subscribedConversationIds.has(conversationId)) return;
       socket.to(Room.conversation(conversationId)).emit('typing:start', {
         conversationId,
         userId,
@@ -120,6 +145,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     });
 
     socket.on('typing:stop', (conversationId) => {
+      if (!subscribedConversationIds.has(conversationId)) return;
       socket.to(Room.conversation(conversationId)).emit('typing:stop', {
         conversationId,
         userId,

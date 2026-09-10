@@ -14,10 +14,11 @@ import { conversationInclude, toConversationDetail, toConversationSummary } from
 import { emitConversationUpdated } from '../../realtime/emitter.js';
 import { routeConversation, transferConversation } from '../routing/router.js';
 import { queueSystemMessage } from '../messages/outbox.js';
+import { assertConversationAccess, conversationVisibilityWhere, type ConversationAccessSubject } from './access.js';
 
 export async function listConversations(
   orgId: string,
-  user: { id: string; role: UserRole; departmentIds: string[] },
+  user: ConversationAccessSubject,
   query: ListConversationsQuery,
 ) {
   const limit = Math.min(query.limit ?? 30, 100);
@@ -34,6 +35,7 @@ export async function listConversations(
 
   const where = {
     orgId,
+    ...conversationVisibilityWhere(user),
     ...(query.status ? { status: { in: query.status as never } } : {}),
     ...(query.departmentId ? { departmentId: query.departmentId } : {}),
     ...(assignedUserFilter !== undefined ? { assignedUserId: assignedUserFilter } : {}),
@@ -77,9 +79,11 @@ export async function listConversations(
   };
 }
 
-export async function getConversation(id: string, orgId: string) {
+export async function getConversation(id: string, user: ConversationAccessSubject) {
+  await assertConversationAccess(user, id, 'view');
+
   const conversation = await prisma.conversation.findFirst({
-    where: { id, orgId },
+    where: { id, orgId: user.orgId },
     include: conversationInclude,
   });
 

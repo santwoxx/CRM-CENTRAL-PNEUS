@@ -1,13 +1,40 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { ChannelType } from '@crm/shared';
+import { env } from '../../env.js';
 import { prisma } from '../../db/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
-import { verifyMetaSignature } from '../../lib/crypto.js';
+import { safeCompare, verifyMetaSignature } from '../../lib/crypto.js';
 import { getChannelCredentials } from '../../channels/registry.js';
 import { ingestWebhook } from '../messages/inbound.js';
 
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** Corpo exato recebido da Meta, necessario para validar o HMAC. */
+    rawWebhookBody?: Buffer;
+  }
+}
+
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
+  /**
+   * A Meta assina os bytes recebidos, nao o JSON depois de parseado. Mantemos
+   * ambos: o Buffer para HMAC e o objeto para a ingestao normal do evento.
+   * Este parser fica encapsulado neste plugin e so afeta as rotas de webhook.
+   */
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, rawBody, done) => {
+    // `parseAs: 'buffer'` entrega Buffer em execucao, mas a assinatura do
+    // Fastify e `string | Buffer`. Normalizamos em vez de forcar o tipo: se
+    // um dia chegar string, o HMAC ainda e calculado sobre os bytes certos.
+    const bytes = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, 'utf8');
+    request.rawWebhookBody = bytes;
+
+    try {
+      done(null, JSON.parse(bytes.toString('utf8')));
+    } catch (error) {
+      done(error as Error);
+    }
+  });
+
   // 1. Verificação do Webhook da Meta Cloud API (GET hub.challenge)
   app.get<{
     Params: { channelId: string };
