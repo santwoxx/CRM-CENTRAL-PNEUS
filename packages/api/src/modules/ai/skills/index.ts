@@ -102,6 +102,19 @@ export async function buildShopContext(
           );
         }
 
+        // O modelo tende a listar precos e esquecer o argumento de venda.
+        // Dizer explicitamente o que usar aumenta muito a chance de ele usar.
+        if (cheapest?.promoPriceCents !== null && cheapest?.promoPriceCents !== undefined) {
+          const desconto = cheapest.priceCents - cheapest.promoPriceCents;
+          lines.push(
+            `ARGUMENTO DE VENDA: a ${cheapest.brand} esta em PROMOCAO, ` +
+              `${formatBRL(desconto)} abaixo do preco normal. Cite isso.`,
+          );
+        }
+        if (cheapest && cheapest.stockQuantity > 0) {
+          lines.push(`Pronta entrega: ${cheapest.stockQuantity} em estoque, montagem na hora.`);
+        }
+
         facts.offersFound = offers.length;
         facts.cheapestPriceCents = cheapest?.effectivePriceCents ?? null;
       } else {
@@ -124,7 +137,7 @@ export async function buildShopContext(
       lines.push(
         `O cliente informou ${partial.formatted}, SEM o aro.`,
         `A medida dele NAO e "${partial.formatted} R13" nem nenhum outro aro - voce nao sabe qual e.`,
-        'Pergunte o aro numa frase curta e ofereca a foto da lateral do pneu como alternativa.',
+        'Pergunte o aro numa frase curta. NAO peca foto - voce nao ve imagem.',
         'NAO cite preco ainda.',
       );
     } else if (attempt) {

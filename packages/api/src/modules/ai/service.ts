@@ -215,8 +215,18 @@ async function executeHandoff(
    * mensagem produzia duas frases seguidas dizendo a mesma coisa, e a da
    * fila logo depois virava a terceira.
    */
-  if (!silent && (reason === HandoffReason.CUSTOMER_REQUESTED || reason === HandoffReason.MENU_SELECTION)) {
-    await queueSystemMessage(conversation.id, 'Certo! Já estou chamando um consultor. 👍');
+  if (
+    !silent &&
+    (reason === HandoffReason.CUSTOMER_REQUESTED ||
+      reason === HandoffReason.MENU_SELECTION ||
+      // Cliente sem saber a medida: a IA nao respondeu, entao o aviso e dela.
+      reason === HandoffReason.AI_UNCERTAIN)
+  ) {
+    const aviso =
+      reason === HandoffReason.AI_UNCERTAIN
+        ? 'Sem problema! Um consultor identifica a medida certa pra você rapidinho. Já estou chamando. 👍'
+        : 'Certo! Já estou chamando um consultor. 👍';
+    await queueSystemMessage(conversation.id, aviso);
   }
 
   // Desativa controle da IA na conversa

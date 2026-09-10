@@ -87,6 +87,40 @@ export function evaluateFastTriggers(
     };
   }
 
+  /**
+   * Cliente disse que nao sabe a medida.
+   *
+   * Sem isto a conversa entrava em laco: a IA explicava de novo onde olhar, o
+   * cliente repetia que nao achava, e o atendimento morria ali. Um vendedor
+   * identifica a medida em segundos pelo veiculo ou pelo historico de compra.
+   * Entregar e mais resolutivo do que insistir.
+   */
+  const semSaberTriggers = [
+    'nao sei',
+    'não sei',
+    'nao lembro',
+    'não lembro',
+    'nao faco ideia',
+    'não faço ideia',
+    'nao consigo ver',
+    'não consigo ver',
+    'nao acho',
+    'não acho',
+    'nao entendi',
+    'não entendi',
+    'nao to achando',
+    'não tô achando',
+  ];
+  if (semSaberTriggers.some((t) => text.includes(t))) {
+    return {
+      shouldHandoff: true,
+      handoffReason: HandoffReason.AI_UNCERTAIN,
+      leadScore: 55,
+      leadSummary: 'Cliente não sabe a medida do pneu. Precisa de ajuda para identificar.',
+      intent: 'Identificação da medida',
+    };
+  }
+
   // Sentimento muito negativo / irritação
   const angryTriggers = ['processo', 'procon', 'golpe', 'absurdo', 'péssimo', 'pessimo', 'lixo', 'reclamação', 'reclamacao', 'propaganda enganosa'];
   if (angryTriggers.some((t) => text.includes(t))) {
