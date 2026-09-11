@@ -59,6 +59,17 @@ export function useSocketEvents() {
 
     socket.on('presence:changed', (presence) => {
       updateAgentPresence(presence);
+
+      // O painel de supervisao ja refletia esta mudanca, mas a barra lateral
+      // continuava mostrando a presenca do momento do login. Resultado: o
+      // admin colocava alguem em ONLINE e essa pessoa seguia lendo "Offline"
+      // na propria tela - justamente o campo que ela usa para saber se esta
+      // recebendo conversa. Lido pelo getState para nao reassinar os eventos
+      // a cada troca de presenca.
+      const atual = useAuthStore.getState().user;
+      if (atual && presence.userId === atual.id && presence.presence !== atual.presence) {
+        useAuthStore.getState().setUser({ ...atual, presence: presence.presence });
+      }
     });
 
     socket.on('queue:updated', (payload) => {
