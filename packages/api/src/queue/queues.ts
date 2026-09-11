@@ -13,6 +13,7 @@ import {
   type OutboundJobData,
   type RoutingJobData,
 } from './jobs.js';
+import { jobIdEntrada, jobIdSaida, jobIdIa, jobIdMidia } from './jobIds.js';
 
 /**
  * Filas.
@@ -92,25 +93,25 @@ export const allQueues = [
 // --- Enfileiramento --------------------------------------------------------
 
 /**
- * Os `jobId` usam hifen, nunca dois-pontos: o BullMQ reserva ":" para montar
- * as proprias chaves no Redis e RECUSA ids que o contenham, derrubando o
- * enfileiramento inteiro em tempo de execucao.
+ * Os `jobId` sao montados em ./jobIds.ts, que guarda as duas regras que ja
+ * custaram caro: nada de ":" (o BullMQ recusa) e nada de identificador vazio
+ * (a chave de deduplicacao vira constante e engole os jobs seguintes).
  */
 export async function enqueueInbound(data: InboundJobData): Promise<void> {
   // jobId = id do evento: reentrega da Meta nao vira job duplicado.
-  await inboundQueue.add('process', data, { jobId: `inbound-${data.webhookEventId}` });
+  await inboundQueue.add('process', data, { jobId: jobIdEntrada(data.webhookEventId) });
 }
 
 export async function enqueueOutbound(data: OutboundJobData, delayMs = 0): Promise<void> {
   // jobId = id da mensagem: dois cliques no botao enviam uma mensagem so.
   await outboundQueue.add('send', data, {
-    jobId: `outbound-${data.messageId}`,
+    jobId: jobIdSaida(data.messageId),
     ...(delayMs > 0 ? { delay: delayMs } : {}),
   });
 }
 
 export async function enqueueAi(data: AiJobData): Promise<void> {
-  await aiQueue.add('reply', data, { jobId: `ai-${data.triggerMessageId}` });
+  await aiQueue.add('reply', data, { jobId: jobIdIa(data.triggerMessageId) });
 }
 
 export async function enqueueRouting(data: RoutingJobData, delayMs = 0): Promise<void> {
@@ -119,7 +120,7 @@ export async function enqueueRouting(data: RoutingJobData, delayMs = 0): Promise
 }
 
 export async function enqueueMedia(data: MediaJobData): Promise<void> {
-  await mediaQueue.add('download', data, { jobId: `media-${data.messageId}` });
+  await mediaQueue.add('download', data, { jobId: jobIdMidia(data.messageId) });
 }
 
 export async function enqueueMaintenance(data: MaintenanceJobData): Promise<void> {

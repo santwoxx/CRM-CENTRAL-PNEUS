@@ -58,7 +58,7 @@ export interface RouteResult {
   reason: string;
 }
 
-interface AgentCandidate {
+export interface AgentCandidate {
   userId: string;
   name: string;
   activeChats: number;
@@ -116,7 +116,7 @@ async function resolveDepartmentId(
  * Atendentes que podem receber uma conversa agora.
  * Precisa estar ativo, ONLINE e com vaga - os tres, sempre.
  */
-async function findEligibleAgents(
+export async function findEligibleAgents(
   db: Db,
   departmentId: string | null,
   orgId: string,
@@ -190,7 +190,7 @@ async function findEligibleAgents(
  *     conhece, que e exatamente o que ele espera.
  *  3. A estrategia configurada no setor.
  */
-function pickAgent(
+export function pickAgent(
   candidates: AgentCandidate[],
   strategy: RoutingStrategy,
   options: { preferredUserId?: string | null; contactAgentId?: string | null },
