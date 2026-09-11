@@ -213,7 +213,8 @@ export function isAiDisabled(): boolean {
   return !env.AI_ENABLED || env.AI_PROVIDER === 'disabled';
 }
 
-export async function generateCompletion(
+/** Executa UMA tentativa, num provedor especifico. */
+async function tentarProvedor(
   messages: AiMessageInput[],
   options: AiCompletionOptions = {},
 ): Promise<AiCompletionResult> {
@@ -575,4 +576,136 @@ export function resolvePersonaProvider(
 
   // Sem provider/model: `generateCompletion` usa o que estiver no .env.
   return {};
+}
+
+// --- Cadeia de provedores --------------------------------------------------
+
+/**
+ * Erros que significam "este provedor acabou" e nao "a requisicao estava
+ * errada".
+ *
+ * A distincao decide se vale tentar o proximo da fila. Cota estourada, chave
+ * sem credito e servico fora do ar sao problemas DO PROVEDOR - outro
+ * atenderia igual. Ja um prompt malformado falharia em todos, e insistir so
+ * gastaria a cota do proximo.
+ */
+function deveTentarOutroProvedor(erro: unknown): boolean {
+  if (!(erro instanceof ProviderError)) return true;
+
+  const status = erro.statusCode;
+
+  // 429 cota, 401/403 chave invalida ou sem credito, 402 pagamento exigido,
+  // 5xx e 504 indisponibilidade.
+  return (
+    status === 429 ||
+    status === 401 ||
+    status === 403 ||
+    status === 402 ||
+    status >= 500 ||
+    erro.retryable
+  );
+}
+
+/** Ordem de tentativa: a cadeia configurada, ou o provedor unico. */
+function cadeiaDeProvedores(): AiProviderName[] {
+  const bruta = env.AI_PROVIDER_CHAIN.trim()
+    ? env.AI_PROVIDER_CHAIN.split(',')
+    : [env.AI_PROVIDER];
+
+  const vistos = new Set<string>();
+  const cadeia: AiProviderName[] = [];
+
+  for (const item of bruta) {
+    const nome = item.trim() as AiProviderName;
+    // Provedor sem credencial e descartado aqui, e nao no meio do
+    // atendimento: entrar na fila so para falhar atrasa o cliente.
+    if (!PROVIDER_NAMES.includes(nome) || vistos.has(nome)) continue;
+    if (!profileFor(nome).apiKey) continue;
+
+    vistos.add(nome);
+    cadeia.push(nome);
+  }
+
+  return cadeia;
+}
+
+/**
+ * Gera a resposta, trocando de provedor quando um falha.
+ *
+ * Por que existe: com camada gratuita, a cota acaba no meio do dia e sem
+ * aviso. Sem cadeia, a conversa em andamento morre e o cliente fica sem
+ * resposta. Com ela, o proximo provedor assume no mesmo segundo e ninguem
+ * percebe - so o log e o alerta ao administrador.
+ *
+ * A ordem e sua: coloque primeiro o gratuito, por ultimo o pago. O pago so
+ * e acionado quando os anteriores falham, entao o custo fica sendo a rede
+ * de seguranca, nao o padrao.
+ */
+export async function generateCompletion(
+  messages: AiMessageInput[],
+  options: AiCompletionOptions = {},
+): Promise<AiCompletionResult> {
+  if (isAiDisabled()) {
+    throw new ProviderError('disabled', 'A IA esta desligada (AI_PROVIDER=disabled).', {
+      retryable: false,
+    });
+  }
+
+  // Provedor pedido explicitamente (teste, persona) nao entra em cadeia.
+  if (options.provider) return tentarProvedor(messages, options);
+
+  const cadeia = cadeiaDeProvedores();
+
+  if (cadeia.length === 0) {
+    throw new ProviderError(
+      'nenhum',
+      'Nenhum provedor de IA configurado. Defina AI_PROVIDER=ollama para rodar local sem chave.',
+      { retryable: false },
+    );
+  }
+
+  let ultimoErro: unknown;
+
+  for (const [indice, provedor] of cadeia.entries()) {
+    try {
+      const resultado = await tentarProvedor(messages, { ...options, provider: provedor });
+
+      if (indice > 0) {
+        logger.warn(
+          { provedor, posicao: indice + 1, cadeia },
+          'Resposta gerada por provedor de reserva: o preferido falhou',
+        );
+      }
+
+      return resultado;
+    } catch (erro) {
+      ultimoErro = erro;
+
+      const ehUltimo = indice === cadeia.length - 1;
+      if (ehUltimo || !deveTentarOutroProvedor(erro)) throw erro;
+
+      logger.warn(
+        {
+          provedor,
+          proximo: cadeia[indice + 1],
+          motivo: erro instanceof Error ? erro.message : String(erro),
+        },
+        'Provedor de IA indisponivel: passando para o proximo da cadeia',
+      );
+    }
+  }
+
+  throw ultimoErro;
+}
+
+/** A cadeia configurada, para exibir no painel de IA. */
+export function descreverCadeia(): { provedor: string; modelo: string; pago: boolean }[] {
+  return cadeiaDeProvedores().map((provedor) => {
+    const perfil = profileFor(provedor);
+    return {
+      provedor,
+      modelo: perfil.chatModel,
+      pago: !perfil.local && !perfil.freeTier,
+    };
+  });
 }

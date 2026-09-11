@@ -102,6 +102,20 @@ const envSchema = z
       .enum(['ollama', 'lmstudio', 'groq', 'google', 'openrouter', 'openai', 'anthropic', 'disabled'])
       .default('ollama'),
 
+    /**
+     * Ordem de tentativa dos provedores, separada por virgula.
+     *
+     * Quando um falha por cota estourada, credito acabado ou indisponibilidade,
+     * o proximo assume na hora - a conversa em andamento nao morre.
+     *
+     * Coloque o gratuito primeiro e o pago por ultimo: assim o pago so e
+     * acionado quando os outros falham, e o custo vira rede de seguranca em
+     * vez de padrao. Vazio = usa apenas AI_PROVIDER.
+     *
+     * Exemplo: AI_PROVIDER_CHAIN=groq,openai,ollama
+     */
+    AI_PROVIDER_CHAIN: z.string().default(''),
+
     // --- Local, custo zero ---
     OLLAMA_BASE_URL: z.string().default('http://localhost:11434/v1'),
     OLLAMA_CHAT_MODEL: z.string().default('qwen2.5:7b-instruct'),
