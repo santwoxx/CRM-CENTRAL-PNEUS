@@ -44,7 +44,11 @@ const csv = z
 const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-    LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+    // 'silent' e um nivel valido do Pino e faltava aqui. Util para calar o
+    // log em teste e em execucao pontual de script.
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
     TZ: z.string().default('America/Sao_Paulo'),
 
     API_PORT: z.coerce.number().int().min(1).max(65535).default(3333),
@@ -188,13 +192,53 @@ const envSchema = z
     }
   });
 
+/**
+ * Valores minimos para os testes rodarem.
+ *
+ * Sem isto, qualquer arquivo de teste que importe um modulo do sistema puxa
+ * este aqui junto, a validacao falha e o processo morre antes da primeira
+ * asserção. Na maquina de quem desenvolve isso nao aparece, porque existe um
+ * `.env` - numa maquina limpa, como o CI, quebra quase tudo. Foi o CI que
+ * encontrou, e e exatamente para isso que ele serve.
+ *
+ * Sao valores obviamente falsos e so entram sob o Vitest. Producao continua
+ * exigindo configuracao de verdade.
+ */
+if (process.env.VITEST) {
+  const padroesDeTeste: Record<string, string> = {
+    NODE_ENV: 'test',
+    LOG_LEVEL: 'silent',
+    DATABASE_URL: 'postgresql://teste:teste@localhost:5432/teste?schema=public',
+    REDIS_URL: 'redis://localhost:6379/15',
+    JWT_ACCESS_SECRET: 'segredo-de-teste-sem-valor-algum-0123456789',
+    JWT_REFRESH_SECRET: 'outro-segredo-de-teste-sem-valor-0123456789',
+  };
+
+  for (const [chave, valor] of Object.entries(padroesDeTeste)) {
+    // Nunca sobrescreve: da para apontar um teste para um banco real quando
+    // for preciso.
+    process.env[chave] ??= valor;
+  }
+}
+
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   const problems = parsed.error.issues
     .map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`)
     .join('\n');
-  console.error(`\nConfiguracao invalida. Corrija o .env:\n\n${problems}\n`);
+  const mensagem = `Configuracao invalida. Corrija o .env:
+
+${problems}
+`;
+
+  // Sob teste, lancar em vez de encerrar. `process.exit` dentro de um modulo
+  // deixa quem importa sem chance de tratar nem de reportar o que houve - o
+  // Vitest so consegue dizer "process.exit foi chamado", escondendo a causa.
+  if (process.env.VITEST) throw new Error(mensagem);
+
+  console.error(`
+${mensagem}`);
   process.exit(1);
 }
 
