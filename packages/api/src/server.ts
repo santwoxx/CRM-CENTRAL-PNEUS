@@ -92,7 +92,17 @@ async function buildServer() {
         // em script NAO ha excecao, que e o que realmente importa.
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
-        scriptSrc: ["'self'"],
+        /**
+         * O login com Google carrega o gapi de `apis.google.com` e alguns
+         * recursos de `gstatic.com`. Sem estas duas origens, a CSP bloqueia
+         * o script e o Firebase devolve `auth/internal-error` - uma mensagem
+         * que nao diz nada sobre a causa real, o que custou um diagnostico
+         * inteiro apontando para o console do Firebase.
+         *
+         * Continua sem 'unsafe-inline' e sem 'unsafe-eval', que e o que de
+         * fato protege contra injecao de script.
+         */
+        scriptSrc: ["'self'", 'https://apis.google.com', 'https://www.gstatic.com'],
         imgSrc: ["'self'", 'data:', 'blob:'],
         mediaSrc: ["'self'", 'blob:'],
         // O painel fala com a propria origem e com o Firebase (login Google).
@@ -104,7 +114,13 @@ async function buildServer() {
           'wss:',
           'ws:',
         ],
-        frameSrc: ["'self'", 'https://crm-central-3c633.firebaseapp.com'],
+        // O popup de login abre um quadro em accounts.google.com e outro no
+        // dominio do projeto Firebase.
+        frameSrc: [
+          "'self'",
+          'https://accounts.google.com',
+          'https://crm-central-3c633.firebaseapp.com',
+        ],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
