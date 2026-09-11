@@ -1,6 +1,6 @@
 import { ChannelType } from '@crm/shared';
 import { ProviderError } from '../../lib/errors.js';
-import { requestBuffer, requestJson } from '../../lib/http.js';
+import { assertUrlExterna, requestBuffer, requestJson } from '../../lib/http.js';
 import { logger } from '../../lib/logger.js';
 import type {
   ChannelAdapter,
@@ -162,6 +162,11 @@ export class EvolutionAdapter implements ChannelAdapter {
 
   async downloadMedia(media: NormalizedMedia): Promise<DownloadedMedia> {
     if (media.directUrl) {
+      // Esta URL veio no payload do webhook, ou seja, de fora. Sem esta
+      // checagem, uma mensagem apontando para um servico interno faria o
+      // servidor busca-lo em nome do remetente.
+      assertUrlExterna(media.directUrl);
+
       const file = await requestBuffer(media.directUrl, {
         provider: 'evolution',
         headers: this.headers,

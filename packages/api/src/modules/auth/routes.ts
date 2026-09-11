@@ -5,8 +5,28 @@ import { isGoogleAuthConfigured } from './firebase.js';
 import { isProduction } from '../../env.js';
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
+  /**
+   * Limite proprio para as rotas de credencial.
+   *
+   * O limite global protege a API como um todo, mas e generoso demais para
+   * senha: com 300 por minuto da para varrer uma lista de e-mails testando
+   * uma senha comum em cada (password spraying). O bloqueio por conta que ja
+   * existe nao pega esse ataque, porque ele erra pouco em cada conta.
+   *
+   * 10 por minuto por origem torna a varredura inviavel e nao atrapalha
+   * ninguem: pessoa nenhuma erra a senha dez vezes em um minuto.
+   */
+  const limiteCredencial = {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute',
+      },
+    },
+  };
+
   // Login com e-mail e senha
-  app.post('/login', async (req, reply) => {
+  app.post('/login', limiteCredencial, async (req, reply) => {
     const input = loginSchema.parse(req.body);
     const result = await login(input.email, input.password, {
       ipAddress: req.ip,
@@ -30,7 +50,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Login com a conta Google (Firebase Authentication)
-  app.post('/google', async (req, reply) => {
+  app.post('/google', limiteCredencial, async (req, reply) => {
     const body = req.body as { idToken?: unknown } | null;
     const idToken = typeof body?.idToken === 'string' ? body.idToken.trim() : '';
 
@@ -68,7 +88,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   }));
 
   // Renovação de token de acesso
-  app.post('/refresh', async (req, reply) => {
+  app.post('/refresh', limiteCredencial, async (req, reply) => {
     let rawToken: string | undefined;
 
     if (req.body && typeof req.body === 'object' && 'refreshToken' in req.body) {

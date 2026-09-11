@@ -1,5 +1,6 @@
 import fp from 'fastify-plugin';
 import { isApiPath } from '../lib/routes.js';
+import { validarUrlMidia } from '../modules/media/seguranca.js';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import '@fastify/cookie';
 import { Permission, can, canAny, type AuthenticatedUser, type UserRole } from '@crm/shared';
@@ -52,7 +53,10 @@ export const authPlugin: FastifyPluginAsync = fp(async (fastify) => {
       // pagina do React (ou um arquivo estatico) e precisa chegar ao
       // navegador sem token - a tela de login e uma delas.
       (request.method === 'GET' && !isApiPath(url)) ||
-      (url.startsWith('/media') && request.method === 'GET')
+      // /media aceita URL assinada em vez de sessao, porque <img> e <audio>
+      // nao enviam cabecalho. A assinatura e conferida aqui; sem ela, a rota
+      // segue exigindo login como qualquer outro dado do cliente.
+      midiaAssinadaValida(request)
     ) {
       return;
     }
@@ -95,3 +99,31 @@ export const authPlugin: FastifyPluginAsync = fp(async (fastify) => {
     request.user = toAuthenticatedUser(user);
   });
 });
+
+
+/**
+ * Confere a assinatura de uma URL de midia.
+ *
+ * Guarda a organizacao na requisicao para a rota nao precisar confiar em
+ * nenhum parametro vindo do cliente.
+ */
+function midiaAssinadaValida(request: FastifyRequest): boolean {
+  const url = request.raw.url ?? '';
+  if (request.method !== 'GET' || !url.startsWith('/media/')) return false;
+
+  const params = request.query as { exp?: string; sig?: string; org?: string };
+  const mediaId = url.split('?')[0]?.split('/')[2] ?? '';
+  if (!mediaId || !params.org) return false;
+
+  if (!validarUrlMidia(mediaId, params.org, params.exp, params.sig)) return false;
+
+  request.mediaOrgId = params.org;
+  return true;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** Organizacao provada por URL assinada, quando nao ha sessao. */
+    mediaOrgId?: string;
+  }
+}

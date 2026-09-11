@@ -1,4 +1,6 @@
 import { existsSync, mkdirSync, createReadStream, createWriteStream } from 'node:fs';
+import { sep } from 'node:path';
+import { AppError } from '../../lib/errors.js';
 import { stat, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -23,8 +25,27 @@ class LocalStorageDriver implements StorageDriver {
     }
   }
 
+  /**
+   * Resolve a chave para um caminho absoluto, recusando qualquer coisa que
+   * escape da pasta de armazenamento.
+   *
+   * O nome do arquivo enviado pelo cliente entra na composicao da chave. Sem
+   * esta checagem, um upload chamado "../../../../etc/cron.d/x" escreveria
+   * fora do storage - execucao remota em alguns cenarios. `resolve` normaliza
+   * o ".." e a comparacao com a raiz derruba o que sair dela.
+   */
   private getPath(key: string): string {
-    return join(this.basePath, key);
+    const target = resolve(this.basePath, key);
+    const root = resolve(this.basePath);
+
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new AppError('Caminho de arquivo invalido', {
+        statusCode: 400,
+        code: 'INVALID_STORAGE_KEY',
+      });
+    }
+
+    return target;
   }
 
   async write(key: string, stream: Readable): Promise<{ size: number }> {

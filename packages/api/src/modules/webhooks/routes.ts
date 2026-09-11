@@ -63,7 +63,15 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const creds = await getChannelCredentials<{ verifyToken: string }>(channelId);
-    if (mode === 'subscribe' && token === creds?.verifyToken) {
+    /**
+     * Comparacao em tempo constante.
+     *
+     * `===` para em cima do primeiro caractere diferente, e a diferenca de
+     * tempo entre "errou no primeiro" e "errou no ultimo" e mensuravel.
+     * Repetindo o teste, da para descobrir o token caractere a caractere.
+     * `safeCompare` gasta sempre o mesmo tempo.
+     */
+    if (mode === 'subscribe' && creds?.verifyToken && safeCompare(token, creds.verifyToken)) {
       logger.info({ channelId }, 'Webhook do WhatsApp Cloud verificado com sucesso pela Meta');
       return reply.code(200).type('text/plain').send(challenge);
     }

@@ -48,6 +48,8 @@
     "esbuild@0.21.5": true,
     "esbuild@0.25.12": true,
     "msgpackr-extract@3.0.4": true,
-    "prisma@6.19.3": true
+    "prisma@6.19.3": true,
+    "@firebase/util@1.15.3": true,
+    "protobufjs@7.6.6": true
   }
 }

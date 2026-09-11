@@ -3,7 +3,8 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
-import { env } from './env.js';
+import helmet from '@fastify/helmet';
+import { env, isProduction } from './env.js';
 import { isApiPath } from './lib/routes.js';
 import { logger } from './lib/logger.js';
 import { checkDatabase, disconnectDatabase } from './db/prisma.js';
@@ -73,10 +74,68 @@ async function buildServer() {
     },
   });
 
+  /**
+   * Cabecalhos de seguranca.
+   *
+   * O pacote ja era dependencia mas nunca fora registrado - a aplicacao subia
+   * sem CSP, sem protecao contra clickjacking e sem nosniff.
+   *
+   * A CSP e restritiva porque o painel e servido desta mesma origem: se um
+   * script conseguisse executar aqui, leria o token do atendente. As fontes
+   * externas liberadas sao exatamente as que o index.html usa.
+   */
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        // 'unsafe-inline' no estilo e exigencia do Tailwind em runtime;
+        // em script NAO ha excecao, que e o que realmente importa.
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        mediaSrc: ["'self'", 'blob:'],
+        // O painel fala com a propria origem e com o Firebase (login Google).
+        connectSrc: [
+          "'self'",
+          'https://identitytoolkit.googleapis.com',
+          'https://securetoken.googleapis.com',
+          'https://www.googleapis.com',
+          'wss:',
+          'ws:',
+        ],
+        frameSrc: ["'self'", 'https://crm-central-3c633.firebaseapp.com'],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        upgradeInsecureRequests: isProduction ? [] : null,
+      },
+    },
+    // O login com Google abre popup: sem isto, a janela nao consegue voltar.
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+    crossOriginResourcePolicy: { policy: 'same-origin' },
+    hsts: isProduction ? { maxAge: 15552000, includeSubDomains: true } : false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  });
+
+  /**
+   * Limite de requisicoes.
+   *
+   * O `allowList: ['127.0.0.1']` que estava aqui desligava o limite por
+   * completo neste deploy: atras do tunel (e de qualquer proxy reverso) TODA
+   * requisicao externa chega como 127.0.0.1. A protecao existia no papel e
+   * nao valia para ninguem.
+   *
+   * A chave passou a ser o usuario autenticado quando ha sessao, e o IP real
+   * quando nao ha - assim um atendente nao consome a cota do outro.
+   */
   await app.register(rateLimit, {
-    max: 200,
+    max: 300,
     timeWindow: '1 minute',
-    allowList: ['127.0.0.1'],
+    keyGenerator: (request) => request.user?.id ?? clientIp(request),
+    // Webhook da Meta chega em rajada legitima e ja e autenticado por HMAC.
+    allowList: (request) => (request.raw.url ?? '').startsWith('/webhooks/'),
   });
 
   await app.register(errorsPlugin);
@@ -156,3 +215,24 @@ main().catch((err) => {
   logger.fatal({ err }, 'Falha fatal ao iniciar servidor');
   process.exit(1);
 });
+
+
+/**
+ * IP real do cliente.
+ *
+ * Atras do Cloudflare Tunnel, `request.ip` e sempre 127.0.0.1. O endereco de
+ * verdade vem no cabecalho do proxy. So confiamos nele quando a conexao
+ * chega mesmo do loopback - se aceitassemos de qualquer origem, qualquer um
+ * forjaria o cabecalho e escaparia do limite.
+ */
+function clientIp(request: { ip: string; headers: Record<string, unknown> }): string {
+  const doLoopback = request.ip === '127.0.0.1' || request.ip === '::1';
+  if (!doLoopback) return request.ip;
+
+  const cabecalho =
+    (request.headers['cf-connecting-ip'] as string | undefined) ??
+    (request.headers['x-forwarded-for'] as string | undefined);
+
+  const primeiro = cabecalho?.split(',')[0]?.trim();
+  return primeiro || request.ip;
+}

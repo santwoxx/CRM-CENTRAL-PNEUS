@@ -17,6 +17,7 @@ import type {
 } from '@crm/shared';
 import { Prisma } from '../../db/prisma.js';
 import { env } from '../../env.js';
+import { assinarUrlMidia } from '../media/seguranca.js';
 
 /**
  * Conversao de linha do banco para DTO da API.
@@ -242,10 +243,12 @@ export function toMessageDTO(message: MessageWithRelations): MessageDTO {
           mimeType: message.media.mimeType,
           fileName: message.media.fileName,
           size: message.media.size,
-          // Servida pela propria API: o storage nunca fica exposto direto.
-          url: `${env.PUBLIC_API_URL}/media/${message.media.id}`,
+          // URL assinada e de curta duracao. Tags <img> e <audio> nao enviam
+          // cabecalho de autenticacao, entao a prova de acesso viaja na
+          // propria URL - e expira sozinha se o link vazar.
+          url: mediaUrl(message.media.id, message.orgId),
           thumbnailUrl: message.media.mimeType.startsWith('image/')
-            ? `${env.PUBLIC_API_URL}/media/${message.media.id}?thumb=1`
+            ? mediaUrl(message.media.id, message.orgId)
             : null,
           durationSeconds: message.media.durationSeconds,
           transcription: message.media.transcription,
@@ -267,4 +270,11 @@ export function toMessageDTO(message: MessageWithRelations): MessageDTO {
     deliveredAt: message.deliveredAt?.toISOString() ?? null,
     readAt: message.readAt?.toISOString() ?? null,
   };
+}
+
+
+/** Monta a URL assinada de um arquivo. */
+function mediaUrl(mediaId: string, orgId: string): string {
+  const assinatura = assinarUrlMidia(mediaId, orgId);
+  return `${env.PUBLIC_API_URL}/media/${mediaId}?org=${encodeURIComponent(orgId)}&${assinatura}`;
 }

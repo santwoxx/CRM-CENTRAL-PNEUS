@@ -1,6 +1,6 @@
 import { ChannelType, MessageType } from '@crm/shared';
 import { ProviderError } from '../../lib/errors.js';
-import { requestBuffer, requestJson } from '../../lib/http.js';
+import { assertUrlExterna, requestBuffer, requestJson } from '../../lib/http.js';
 import { logger } from '../../lib/logger.js';
 import type {
   ChannelAdapter,
@@ -272,6 +272,10 @@ export class WhatsAppCloudAdapter implements ChannelAdapter {
     if (!metadata.url) {
       throw new ProviderError('whatsapp-cloud', 'Midia sem URL de download', { retryable: false });
     }
+
+    // A URL vem da resposta da Meta e nao do cliente, mas conferir custa nada
+    // e impede que uma resposta adulterada nos redirecione para a rede interna.
+    assertUrlExterna(metadata.url);
 
     const file = await requestBuffer(metadata.url, {
       provider: 'whatsapp-cloud',
