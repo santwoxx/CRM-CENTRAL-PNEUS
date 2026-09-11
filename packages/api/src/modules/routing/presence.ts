@@ -9,6 +9,8 @@ import { redis } from '../../lib/redis.js';
 import { logger } from '../../lib/logger.js';
 import { env } from '../../env.js';
 import { emitPresenceChanged } from '../../realtime/emitter.js';
+import { enqueueMaintenance } from '../../queue/queues.js';
+import { MaintenanceTask } from '../../queue/jobs.js';
 
 /**
  * Presenca dos atendentes.
@@ -118,6 +120,19 @@ export async function setPresence(
 
   const dto = await buildPresenceDTO(userId);
   if (dto) await emitPresenceChanged(user.orgId, dto);
+
+  // Atendente que acabou de ficar disponivel precisa receber a fila AGORA.
+  // A varredura periodica roda a cada 45s: sem isto, um cliente esperando
+  // fica ate 45 segundos em silencio com um atendente livre do outro lado.
+  // Vai para a fila de manutencao em vez de rodar aqui para nao segurar a
+  // resposta da requisicao - e reusa exatamente o mesmo caminho ja testado.
+  if (presence === AgentPresence.ONLINE) {
+    await enqueueMaintenance({ task: MaintenanceTask.QUEUE_DRAIN }).catch((error) =>
+      // Falhar o drain nao pode falhar a mudanca de presenca: a varredura
+      // periodica ainda vai pegar essas conversas alguns segundos depois.
+      logger.warn({ err: error, userId }, 'Falha ao pedir drenagem imediata da fila'),
+    );
+  }
 
   logger.info(
     { userId, presence, automatic: options.automatic ?? false },
