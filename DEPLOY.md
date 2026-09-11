@@ -23,6 +23,57 @@ cada uma cobra de você em troca.
 
 ---
 
+## Docker é opcional
+
+O sistema **não depende de Docker**. Nesta máquina ele já roda sem container
+nenhum — Postgres, Redis e a IA são serviços nativos do Windows, iniciados
+junto com o sistema.
+
+| Peça | Sem Docker | Como instalar |
+|---|---|---|
+| PostgreSQL | Serviço do Windows | `winget install PostgreSQL.PostgreSQL.17` |
+| Redis | Memurai (compatível) | `winget install Memurai.MemuraiDeveloper` |
+| IA local | Ollama nativo | `winget install Ollama.Ollama` |
+| API e worker | Node direto | `npm run dev` |
+| Painel | Servido pela API | nada a instalar |
+
+O `scripts/iniciar.ps1` detecta serviço nativo antes de tentar Docker, então
+não há passo extra.
+
+### Quando o Docker ainda ajuda
+
+**Na VM da Oracle.** Lá é Linux, e o problema de virtualização que trava aqui
+simplesmente não existe — o Docker roda direto no kernel, sem WSL no meio.
+Um `docker compose up` sobe tudo igual, sem instalar nada à mão. É por isso
+que o `Dockerfile` existe: ele é para o servidor, não para o seu PC.
+
+Se preferir, também dá para instalar nativo na VM (`apt install postgresql
+redis-server`). Funciona igual, dá um pouco mais de trabalho.
+
+**Para o canal Evolution.** É a única peça que o `docker-compose` oferece e
+você não tem nativa. Ela é uma aplicação Node e roda a partir do código-fonte,
+usando o Postgres e o Redis que você já tem:
+
+```bash
+git clone https://github.com/EvolutionAPI/evolution-api
+cd evolution-api
+npm install
+# configure o .env apontando para o seu Postgres e Redis locais
+npm run start:prod
+```
+
+Depois é só cadastrar o canal no painel apontando para `http://localhost:8080`.
+
+> Se a campanha no número secundário não for para já, dá para deixar isso
+> para depois — o canal oficial não precisa de nada disso.
+
+### O erro de virtualização, resumido
+
+O Docker Desktop no Windows precisa do WSL, e nesta máquina o WSL não
+provisiona a máquina virtual (o log diz `backend is not running`). É defeito
+conhecido em versões Insider Preview do Windows. **Não vale gastar tempo com
+isso**: o sistema não precisa, e no servidor o problema não existe.
+
 ## Opção 1 — Na sua máquina + Cloudflare Tunnel ⭐ recomendada para começar
 
 **Custo: R$ 0,00 de verdade. Sem cartão de crédito.**

@@ -5,6 +5,18 @@ import { getQueueSnapshots } from '../../queue/queues.js';
 
 export const healthRoutes: FastifyPluginAsync = async (app) => {
   // Verificação simples de liveness (processo vivo)
+  /**
+   * Raiz do health.
+   *
+   * Ferramenta de monitoramento chama "/health" por convencao, e ate agora
+   * isso devolvia 404 - o alerta dispararia dizendo que o sistema caiu
+   * enquanto ele estava perfeitamente de pe. Aponta para a mesma verificacao
+   * completa do /ready.
+   */
+  app.get('/', async (_req, reply) => {
+    return reply.redirect('/health/ready', 302);
+  });
+
   app.get('/live', async (_req, reply) => {
     return reply.send({ status: 'ok', uptime: process.uptime() });
   });
