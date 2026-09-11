@@ -105,6 +105,7 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
+  # API + painel na mesma imagem: um endereco so, sem CORS entre dominios.
   api:
     build:
       context: .
@@ -133,6 +134,8 @@ services:
       retries: 5
       start_period: 30s
 
+  # Mesma imagem da API, comando diferente. O worker processa fila, IA e
+  # roteamento em processo separado: uma tarefa pesada nao trava o webhook.
   worker:
     build:
       context: .
@@ -150,23 +153,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-crm_dev_password}@postgres:5432/${POSTGRES_DB:-crm}?schema=public
       REDIS_URL: redis://redis:6379/0
       ROLE: worker
-    command: ['node', 'dist/worker.js']
+    command: ['node', 'packages/api/dist/worker.js']
     volumes:
       - media_storage:/app/storage
-
-  web:
-    build:
-      context: .
-      dockerfile: packages/web/Dockerfile
-      args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:3333}
-    container_name: crm_web
-    restart: unless-stopped
-    profiles: ['app']
-    depends_on:
-      - api
-    ports:
-      - '${WEB_PORT:-8081}:80'
 
 volumes:
   ollama_models:

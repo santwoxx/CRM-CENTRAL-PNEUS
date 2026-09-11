@@ -1,0 +1,127 @@
+# =============================================================================
+# Verificacao automatica a cada envio de codigo.
+#
+# Para que serve: hoje quem garante que o sistema compila e que os testes
+# passam e uma pessoa lembrando de rodar os comandos. Isso funciona ate o dia
+# em que alguem esquece - e o erro aparece com o cliente do outro lado.
+#
+# Aqui, todo envio para `main` e todo pull request sao verificados antes de
+# virar realidade. Se quebrar, quebra no GitHub, nao no atendimento.
+# =============================================================================
+name: Verificacao
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Envios em sequencia cancelam a verificacao anterior: nao adianta gastar
+# minuto testando um commit que ja foi substituido.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualidade:
+    name: Tipos e testes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Gerar cliente do Prisma
+        # Os tipos do banco sao gerados: sem isto a verificacao de tipos falha
+        # apontando erros que nao existem no codigo.
+        run: npx prisma generate --schema packages/api/prisma/schema.prisma
+
+      - name: Compilar pacote compartilhado
+        # A API e o painel importam os tipos daqui; precisa vir primeiro.
+        run: npm run build -w @crm/shared
+
+      - name: Verificar tipos
+        run: npm run typecheck
+
+      - name: Rodar testes
+        run: npm run test
+
+      - name: Auditar dependencias
+        # Informativo: falha conhecida nao deve travar a entrega, mas fica
+        # visivel no log para nao ser esquecida.
+        run: npm audit --omit=dev --audit-level=high || true
+
+  imagem:
+    name: Construir imagem
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: qualidade
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construir
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/api/Dockerfile
+          # Nao publicamos em registro: o objetivo aqui e provar que a imagem
+          # constroi. Quem publica e o deploy, com credencial propria.
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  migracao:
+    name: Migracoes aplicam num banco limpo
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: qualidade
+
+    # Um Postgres descartavel so para esta verificacao. E o unico jeito de
+    # saber que as migracoes rodam do zero - o banco de desenvolvimento ja
+    # tem o schema e esconderia uma migracao quebrada.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: verificacao
+          POSTGRES_DB: crm
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Aplicar migracoes
+        run: npx prisma migrate deploy --schema packages/api/prisma/schema.prisma
+        env:
+          DATABASE_URL: postgresql://crm:verificacao@localhost:5432/crm?schema=public
+
+      - name: Conferir que o schema bate com as migracoes
+        # Acusa schema.prisma alterado sem a migracao correspondente - erro
+        # que so apareceria no deploy, com o banco de producao na frente.
+        run: npx prisma migrate diff --from-migrations packages/api/prisma/migrations --to-schema-datamodel packages/api/prisma/schema.prisma --shadow-database-url "$DATABASE_URL" --exit-code
+        env:
+          DATABASE_URL: postgresql://crm:verificacao@localhost:5432/crm?schema=public

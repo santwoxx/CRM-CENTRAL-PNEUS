@@ -1,0 +1,15 @@
+# Nada daqui entra na imagem.
+node_modules
+**/node_modules
+**/dist
+.git
+.github
+storage
+*.log
+.env
+.env.*
+!.env.example
+packages/api/prisma/*.db
+**/*.tsbuildinfo
+scripts
+*.md
