@@ -99,7 +99,18 @@ export function describeFirebaseError(error: unknown): string {
     'auth/unauthorized-domain':
       'Este endereco nao esta autorizado no Firebase. Adicione-o em Authentication > Settings > Authorized domains.',
     'auth/operation-not-allowed':
-      'O provedor Google esta desativado. Ative em Authentication > Sign-in method.',
+      'O login com Google ainda nao foi ativado no Firebase. Ative em Authentication > Sign-in method > Google.',
+    // `internal-error` e a mensagem generica do Firebase e nao diz nada ao
+    // usuario. Na pratica, quase sempre e uma destas tres causas - listar
+    // evita meia hora de tentativa e erro.
+    'auth/internal-error':
+      'O Firebase recusou a requisicao. Verifique, nesta ordem: ' +
+      '(1) o provedor Google esta ativado em Authentication > Sign-in method; ' +
+      '(2) este endereco esta em Authentication > Settings > Authorized domains; ' +
+      '(3) a chave da API nao tem restricao de origem no Google Cloud Console.',
+    'auth/invalid-api-key': 'A chave do Firebase esta incorreta ou foi revogada.',
+    'auth/configuration-not-found':
+      'Projeto do Firebase sem Authentication configurado. Ative o produto no console.',
   };
 
   return messages[code] ?? (error instanceof Error ? error.message : 'Falha ao entrar com o Google.');

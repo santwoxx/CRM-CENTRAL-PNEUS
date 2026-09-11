@@ -27,8 +27,9 @@ RUN npm ci --include=dev
 FROM node:22-alpine AS build
 WORKDIR /app
 
+# Workspaces do npm icam as dependencias para a raiz: nao existe
+# `packages/*/node_modules` para copiar. Tentar copiar quebra a construcao.
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY . .
 
 # O cliente do Prisma e gerado a partir do schema e precisa existir antes de

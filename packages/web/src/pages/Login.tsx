@@ -91,12 +91,6 @@ export const LoginPage: React.FC = () => {
           </div>
         )}
 
-        {error && (
-          <div className="mt-4 bg-red-950/60 border border-red-900 rounded-xl px-3 py-2.5 text-[11px] text-red-300">
-            {error}
-          </div>
-        )}
-
         {/*
           Senha continua disponivel, mas discreta.
 
