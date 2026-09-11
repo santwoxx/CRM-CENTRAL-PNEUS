@@ -396,6 +396,16 @@ model Contact {
   customFields   Json           @default("{}")
 
   isBlocked      Boolean   @default(false)
+
+  /// Quando o cliente pediu para nao receber mais mensagens ("PARE").
+  /// Separado de `isBlocked` de proposito: bloquear e uma decisao NOSSA
+  /// (spam, abuso); descadastrar e uma decisao DELE, e a Meta exige que
+  /// seja respeitada. Confundir os dois faria um pedido legitimo do cliente
+  /// virar bloqueio punitivo no historico.
+  optedOutAt     DateTime?
+  /// O texto exato que ele enviou, para prova em caso de contestacao.
+  optOutReason   String?
+
   firstContactAt DateTime?
   lastContactAt  DateTime?
 

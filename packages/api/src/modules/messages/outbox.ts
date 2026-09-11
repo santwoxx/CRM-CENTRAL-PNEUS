@@ -41,6 +41,12 @@ export interface CreateOutboundInput {
   clientMessageId?: string | null;
   /** Pula a checagem da janela de 24h (usado por template aprovado). */
   bypassWindowCheck?: boolean;
+  /**
+   * Permite enviar para quem se descadastrou. Reservado a UMA coisa: a
+   * confirmacao do proprio descadastramento. Qualquer outro uso quebra a
+   * exigencia da Meta e expoe o numero a denuncia.
+   */
+  bypassOptOut?: boolean;
 }
 
 export interface CreateOutboundResult {
@@ -61,7 +67,7 @@ export async function createOutboundMessage(
       assignedUserId: true,
       status: true,
       windowExpiresAt: true,
-      contact: { select: { isBlocked: true } },
+      contact: { select: { isBlocked: true, optedOutAt: true } },
     },
   });
 
@@ -72,6 +78,24 @@ export async function createOutboundMessage(
 
   if (!isPrivate && conversation.contact.isBlocked) {
     throw new ConflictError('Este contato esta bloqueado', 'CONTACT_BLOCKED');
+  }
+
+  /**
+   * Cliente descadastrado nao recebe mais nada.
+   *
+   * A barreira fica AQUI, e nao em quem chama, de proposito: e o unico ponto
+   * por onde toda mensagem passa. Espalhada pelos chamadores, uma rota nova
+   * esqueceria a checagem e o descumprimento voltaria sem ninguem perceber.
+   *
+   * Vale inclusive para mensagem digitada por atendente: se ele responder sem
+   * repararna etiqueta na tela, o sistema recusa e explica.
+   */
+  if (!isPrivate && !input.bypassOptOut && conversation.contact.optedOutAt) {
+    throw new ConflictError(
+      'Este cliente pediu para nao receber mensagens (descadastrou-se). ' +
+        'Ele volta a receber se escrever VOLTAR.',
+      'CONTACT_OPTED_OUT',
+    );
   }
 
   // Fora da janela de 24h o WhatsApp so aceita template aprovado. Barrar aqui
@@ -219,7 +243,12 @@ async function afterCreate(
 export async function queueSystemMessage(
   conversationId: string,
   content: string,
-  options: { payload?: Record<string, unknown>; type?: MessageType } = {},
+  options: {
+    payload?: Record<string, unknown>;
+    type?: MessageType;
+    /** Apenas para a confirmacao do proprio descadastramento. */
+    bypassOptOut?: boolean;
+  } = {},
 ): Promise<string | null> {
   try {
     const result = await createOutboundMessage({
@@ -228,6 +257,7 @@ export async function queueSystemMessage(
       content,
       payload: options.payload ?? null,
       senderType: MessageSenderType.SYSTEM,
+      bypassOptOut: options.bypassOptOut ?? false,
     });
     return result.messageId;
   } catch (error) {

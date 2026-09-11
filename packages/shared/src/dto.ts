@@ -70,7 +70,16 @@ export const changePasswordSchema = z
 export const createUserSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(10).max(200),
+  // A mesma exigencia da troca de senha. Antes, criar usuario aceitava dez
+  // letras iguais enquanto trocar exigia complexidade: a porta de entrada
+  // era mais fraca que a de manutencao.
+  password: z
+    .string()
+    .min(10, 'A senha precisa de pelo menos 10 caracteres')
+    .max(200)
+    .regex(/[a-z]/, 'Inclua ao menos uma letra minuscula')
+    .regex(/[A-Z]/, 'Inclua ao menos uma letra maiuscula')
+    .regex(/\d/, 'Inclua ao menos um numero'),
   role: enumOf(UserRole).default(UserRole.AGENT),
   maxConcurrentChats: z.number().int().min(1).max(50).default(5),
   departmentIds: z.array(cuidSchema).default([]),

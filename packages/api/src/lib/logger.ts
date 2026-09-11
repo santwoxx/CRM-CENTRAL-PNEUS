@@ -30,6 +30,14 @@ export const logger: Logger = pino({
       '*.apiKey',
       '*.api_key',
       '*.authorization',
+      // Dado pessoal: log costuma ir para servico de terceiro e ficar meses
+      // guardado. Telefone e e-mail de cliente nao precisam estar la para o
+      // log cumprir sua funcao - o id do contato identifica sem expor.
+      'phone',
+      'telefone',
+      '*.phone',
+      'contact.phone',
+      'identity.email',
       'ANTHROPIC_API_KEY',
       'OPENAI_API_KEY',
       'WHATSAPP_ACCESS_TOKEN',

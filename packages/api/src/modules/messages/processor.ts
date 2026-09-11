@@ -16,6 +16,11 @@ import { whatsappWindowExpiry } from '../../lib/time.js';
 import { enqueueAi, enqueueMedia, enqueueRouting } from '../../queue/queues.js';
 import { HandoffReason } from '@crm/shared';
 import { resolveContact } from '../contacts/resolver.js';
+import {
+  interpretarPedidoDeContato,
+  registrarDescadastramento,
+  registrarRetorno,
+} from '../contacts/optOut.js';
 import { queueSystemMessage } from './outbox.js';
 import {
   conversationInclude,
@@ -290,6 +295,38 @@ async function decideNextAction(
     select: { id: true, orgId: true, status: true, aiControlled: true, metadata: true },
   });
   if (!conversation) return;
+
+  /**
+   * Descadastramento vem PRIMEIRO, antes de menu, IA e roteamento.
+   *
+   * Quem pediu para nao ser mais contatado nao pode receber resposta
+   * automatica, nem cair na fila de um atendente. Deixar isso para depois de
+   * qualquer outro tratamento arrisca uma resposta sair no caminho - e uma
+   * so ja e descumprimento.
+   */
+  const pedido = interpretarPedidoDeContato(incoming.content);
+  if (pedido === 'descadastrar') {
+    const contato = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { contactId: true },
+    });
+    if (contato) {
+      await registrarDescadastramento(contato.contactId, conversationId, incoming.content ?? '');
+    }
+    return;
+  }
+  if (pedido === 'voltar') {
+    const contato = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { contactId: true, contact: { select: { optedOutAt: true } } },
+    });
+    // So responde se ele estava mesmo fora: senao "voltar" numa conversa
+    // normal geraria uma resposta sem sentido.
+    if (contato?.contact.optedOutAt) {
+      await registrarRetorno(contato.contactId, conversationId);
+      return;
+    }
+  }
 
   const selection = resolveMenuSelection(incoming, conversation.metadata);
   if (selection) {
