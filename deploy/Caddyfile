@@ -1,0 +1,15 @@
+# Proxy HTTPS do CRM. O certificado e emitido e renovado sozinho pelo
+# Let's Encrypt, desde que o DNS de {$DOMINIO} aponte para esta VM e as
+# portas 80 e 443 estejam abertas (PRODUCAO.md, passo 2).
+
+{$DOMINIO} {
+	encode zstd gzip
+
+	# A Evolution entrega mensagens pela rede interna (http://api:3333).
+	# De fora, esta rota nao tem motivo para existir: fechar aqui e uma
+	# segunda barreira alem do token, caso ele um dia vaze.
+	@webhookEvolution path /webhooks/evolution/* /api/webhooks/evolution/*
+	respond @webhookEvolution 404
+
+	reverse_proxy api:3333
+}

@@ -32,6 +32,18 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Configuracao PUBLICA do Firebase para o painel. O Vite embute estes valores
+# no JavaScript no momento do build - e o .env nao entra na imagem (tem
+# segredos), entao sem estes ARGs o painel de producao saia sem Firebase e,
+# como producao so aceita login pelo Google, ninguem conseguia entrar.
+# Nao sao segredos: sao os mesmos valores que todo navegador recebe.
+ARG VITE_FIREBASE_API_KEY=
+ARG VITE_FIREBASE_AUTH_DOMAIN=
+ARG VITE_FIREBASE_PROJECT_ID=
+ARG VITE_FIREBASE_STORAGE_BUCKET=
+ARG VITE_FIREBASE_MESSAGING_SENDER_ID=
+ARG VITE_FIREBASE_APP_ID=
+
 # O cliente do Prisma e gerado a partir do schema e precisa existir antes de
 # compilar a API, que importa os tipos dele.
 RUN npx prisma generate --schema packages/api/prisma/schema.prisma
@@ -55,7 +67,9 @@ ENV TZ=America/Sao_Paulo
 # `tini` como PID 1 repassa SIGTERM aos processos filhos. Sem ele, o
 # encerramento gracioso do servidor nunca e acionado e o container morre no
 # meio de um envio.
-RUN apk add --no-cache tini
+# openssl: o motor do Prisma no Alpine precisa da libssl para carregar e para
+# detectar a versao certa. Sem ele o erro so aparece na primeira consulta.
+RUN apk add --no-cache tini openssl
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist

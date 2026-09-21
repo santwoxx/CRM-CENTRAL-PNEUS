@@ -51,6 +51,9 @@ jobs:
       - name: Verificar tipos
         run: npm run typecheck
 
+      - name: Analisar qualidade do codigo
+        run: npm run lint
+
       - name: Rodar testes
         run: npm run test
 
@@ -125,3 +128,81 @@ jobs:
         run: npx prisma migrate diff --from-migrations packages/api/prisma/migrations --to-schema-datamodel packages/api/prisma/schema.prisma --shadow-database-url "$DATABASE_URL" --exit-code
         env:
           DATABASE_URL: postgresql://crm:verificacao@localhost:5432/crm?schema=public
+
+  producao:
+    # Construir a imagem nao prova que ela funciona. Esta etapa sobe a stack
+    # de producao exatamente como na VM e confere o que ja quebrou - ou
+    # quebraria - sem ninguem perceber antes do primeiro cliente:
+    #   - painel sem Firebase (o .env nao entra na imagem) = ninguem loga;
+    #   - preparo do banco falhando = API nunca sobe;
+    #   - contas de demonstracao com senha publica criadas em producao;
+    #   - banco ou Redis expostos fora da rede interna;
+    #   - Redis aceitando conexao sem senha.
+    name: Stack de producao sobe de verdade
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: qualidade
+    env:
+      COMPOSE: docker compose -f docker-compose.prod.yml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Monta o .env de producao com segredos descartaveis
+        run: |
+          cp .env.production.example .env
+          bash scripts/gerar-segredos.sh
+          sed -i 's|^DOMINIO=.*|DOMINIO=crm.ci.invalid|' .env
+          sed -i 's|^VITE_FIREBASE_API_KEY=.*|VITE_FIREBASE_API_KEY=chave-publica-do-ci|' .env
+
+      - name: Constroi e sobe (sem o Caddy, que precisaria de DNS real)
+        run: $COMPOSE up -d --build api worker
+
+      - name: API fica saudavel
+        run: |
+          for i in $(seq 1 60); do
+            estado=$(docker inspect --format '{{.State.Health.Status}}' "$($COMPOSE ps -q api)" 2>/dev/null || true)
+            [ "$estado" = healthy ] && exit 0
+            sleep 3
+          done
+          echo "API nao ficou saudavel"; exit 1
+
+      - name: Banco, Redis e filas respondem
+        run: >
+          $COMPOSE exec -T api node -e
+          "fetch('http://127.0.0.1:3333/health/ready').then(async r => {
+            console.log(JSON.stringify((await r.json()).components));
+            process.exit(r.ok ? 0 : 1);
+          })"
+
+      - name: Primeiro boot criou so a base, sem demonstracao
+        run: |
+          sql() { $COMPOSE exec -T postgres sh -c "psql -U \$POSTGRES_USER -d \$POSTGRES_DB -tAc \"$1\""; }
+          [ "$(sql 'SELECT count(*) FROM organizations')" = 1 ]
+          [ "$(sql 'SELECT count(*) FROM departments')" = 3 ]
+          [ "$(sql "SELECT count(*) FROM users WHERE email LIKE '%@centralpneus.com.br'")" = 0 ]
+          [ "$(sql 'SELECT count(*) FROM tire_products')" = 0 ]
+          [ "$(sql 'SELECT count(*) FROM quick_replies')" = 0 ]
+          echo "base ok, nenhuma conta ou dado de demonstracao"
+
+      - name: Preparo e idempotente (proximo deploy nao mexe em nada)
+        run: $COMPOSE run --rm preparar | tee saida.txt && grep -q "Nada a fazer" saida.txt
+
+      - name: Painel saiu com a configuracao do Firebase
+        run: $COMPOSE exec -T api sh -c "grep -l 'chave-publica-do-ci' packages/web/dist/assets/*.js"
+
+      - name: Nada alem do proxy escuta no host
+        run: |
+          for porta in 3333 5432 6379 8080 11434; do
+            if nc -z -w 2 127.0.0.1 "$porta"; then echo "porta $porta exposta"; exit 1; fi
+          done
+
+      - name: Redis recusa quem nao tem senha
+        run: |
+          saida=$(docker run --rm --network crm-central-pneus_interna redis:7-alpine redis-cli -h redis ping 2>&1 || true)
+          echo "$saida"
+          echo "$saida" | grep -q NOAUTH
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: $COMPOSE logs --no-color

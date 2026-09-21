@@ -141,27 +141,21 @@ A oferta é generosa o bastante para rodar **tudo, inclusive a IA**:
 - 10 TB de tráfego/mês
 - IP público fixo
 
-```bash
-# Na VM (Ubuntu 22.04 ARM):
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin git
-sudo usermod -aG docker $USER && newgrp docker
+**Siga o passo a passo em [PRODUCAO.md](PRODUCAO.md).** Ele usa o
+`docker-compose.prod.yml`, que já traz HTTPS automático (Caddy), banco e Redis
+fechados na rede interna, Redis com senha, preparo do banco a cada deploy e
+backup.
 
-git clone <seu-repositorio> && cd crm-central-pneus
-cp .env.example .env && nano .env      # ajuste segredos e PUBLIC_API_URL
-
-docker compose --profile app --profile ia up -d
-docker compose exec ollama ollama pull qwen2.5:7b-instruct
-docker compose exec api npm run db:deploy -w @crm/api
-docker compose exec api npm run db:seed -w @crm/api
-```
-
-Para o HTTPS (a Meta exige certificado válido), use Caddy — ele emite e renova
-o certificado Let's Encrypt sozinho, de graça.
+> Não suba produção com o `docker-compose.yml` nem com `npm run db:seed`. O
+> primeiro publica Postgres, Redis e Evolution em todas as interfaces - numa
+> VM com IP público, é o banco de clientes aberto para a internet (e o Docker
+> passa por cima do firewall do Ubuntu). O segundo cria um dono com a senha
+> que está escrita neste repositório.
 
 | ✅ A favor | ❌ Contra |
 |---|---|
 | Sempre ligado, sem hibernar | Cadastro exige cartão (sem cobrança) |
-| 24 GB de RAM roda IA confortável | Instância ARM às vezes falta na região |
+| 24 GB de RAM roda IA local (lenta em CPU: use como reserva) | Instância ARM às vezes falta na região |
 | IP fixo e tráfego generoso | Você administra o servidor |
 
 **Para quem é:** operação real, vários atendentes, sem depender do PC da loja.

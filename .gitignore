@@ -4,6 +4,8 @@ build/
 .env
 .env.*
 !.env.example
+# Modelo de producao: so tem TROCAR e valores publicos, nunca segredo real.
+!.env.production.example
 *.log
 logs/
 coverage/

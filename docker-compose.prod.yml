@@ -1,0 +1,243 @@
+# =============================================================================
+# CRM Central Pneus - PRODUCAO
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Passo a passo completo em PRODUCAO.md.
+#
+# O que muda em relacao ao docker-compose.yml (desenvolvimento), e por que:
+#
+#  - Nenhuma porta publica alem de 80/443 do Caddy. No compose de
+#    desenvolvimento, Postgres, Redis, Evolution e Ollama escutam em 0.0.0.0 -
+#    numa VM com IP publico isso e o banco de clientes aberto para a internet.
+#    E o Docker escreve as proprias regras de iptables: o firewall do Ubuntu
+#    (ufw) NAO protege porta publicada por container.
+#  - Redis com senha. Redis aberto e sem senha e uma das invasoes mais comuns
+#    da internet: da para gravar arquivo no disco do servidor por ele.
+#  - HTTPS automatico (Caddy + Let's Encrypt). A Meta so entrega webhook em
+#    HTTPS, e o login do Google exige origem segura.
+#  - O banco e migrado e preparado ANTES da API subir, sozinho, a cada deploy.
+# =============================================================================
+name: crm-central-pneus
+
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-crm}?schema=public
+  REDIS_URL: redis://:${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}@redis:6379/0
+  # Derivado do dominio de proposito: um PUBLIC_API_URL desatualizado ja
+  # derrubou o login inteiro (a guarda de origem recusava todo mundo) e gera
+  # link de midia apontando para host inexistente.
+  PUBLIC_API_URL: https://${DOMINIO:?defina DOMINIO no .env}
+  # Painel e API no mesmo endereco: nenhuma outra origem e aceita.
+  CORS_ORIGINS: ''
+  # IP fixo do Caddy (rede abaixo). So o X-Forwarded-For dele e confiavel;
+  # sem isto, todo mundo aparece com o IP do proxy e o limite de tentativas
+  # vira um balde unico - atendentes deslogados em massa.
+  TRUSTED_PROXY_IPS: 172.30.0.10
+  STORAGE_LOCAL_PATH: /app/storage
+  EVOLUTION_BASE_URL: http://evolution:8080
+  OLLAMA_BASE_URL: http://ollama:11434/v1
+  # O simulador cria conversas de verdade no banco.
+  SIMULATOR_ENABLED: 'false'
+
+x-app: &app
+  image: crm-central-pneus:latest
+  build:
+    context: .
+    dockerfile: packages/api/Dockerfile
+    args:
+      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+      VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
+      VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+      VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET:-}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
+      VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+  restart: unless-stopped
+  env_file: .env
+  volumes:
+    - media_storage:/app/storage
+  networks: [interna]
+  logging:
+    driver: json-file
+    options:
+      max-size: '20m'
+      max-file: '5'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+      # Sem isso o Postgres cria o banco com locale C e a ordenacao de acentos fica errada.
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=pt-BR --encoding=UTF8'
+    command: ['postgres', '-c', 'max_connections=100', '-c', 'shared_buffers=512MB']
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres-init.sql:/docker-entrypoint-initdb.d/10-evolution.sql:ro
+    networks: [interna]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly: a fila nao evapora se o container reiniciar.
+    # noeviction: o Redis nunca descarta job para abrir espaco.
+    command: >
+      redis-server --appendonly yes --maxmemory-policy noeviction
+      --requirepass ${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env}
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks: [interna]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # Tarefa de uma vez so, a cada deploy: aplica as migracoes e, no primeiro
+  # boot, cria a base (organizacao, setores, persona, donos). Depois disso nao
+  # toca em nada. API e worker so sobem se ela terminar com sucesso - assim
+  # uma migracao quebrada nunca chega a atender cliente com o banco pela metade.
+  preparar:
+    <<: *app
+    restart: 'no'
+    # Sem ROLE proprio: a configuracao so aceita api, worker ou all, e um valor
+    # fora da lista derrubaria esta tarefa - e com ela a subida da API.
+    environment: *app-env
+    command:
+      - sh
+      - -c
+      - >
+        ./node_modules/.bin/prisma migrate deploy --schema packages/api/prisma/schema.prisma
+        && node packages/api/dist/scripts/preparar-banco.js
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    environment:
+      <<: *app-env
+      ROLE: api
+    depends_on:
+      preparar:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Mesma imagem, processo separado: fila, IA e roteamento. Uma resposta lenta
+  # da IA nao trava o webhook.
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      ROLE: worker
+    command: ['node', 'packages/api/dist/worker.js']
+    # O healthcheck da imagem consulta a porta HTTP, que o worker nao abre.
+    healthcheck:
+      disable: true
+    depends_on:
+      preparar:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Unica porta aberta para a internet. Emite e renova o certificado HTTPS
+  # sozinho (Let's Encrypt), desde que o DNS do dominio aponte para a VM e as
+  # portas 80 e 443 estejam liberadas.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      DOMINIO: ${DOMINIO}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      interna:
+        ipv4_address: 172.30.0.10
+
+  # WhatsApp via QR Code (numero secundario / campanha). So sobe com
+  #   docker compose -f docker-compose.prod.yml --profile evolution up -d
+  evolution:
+    image: atendai/evolution-api:v2.1.1
+    restart: unless-stopped
+    profiles: ['evolution']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY no .env}
+      DATABASE_ENABLED: 'true'
+      DATABASE_PROVIDER: postgresql
+      # Banco proprio (criado por deploy/postgres-init.sql): uma migracao da
+      # Evolution nunca toca nas tabelas de clientes do CRM.
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD}@postgres:5432/evolution?schema=public
+      DATABASE_SAVE_DATA_INSTANCE: 'true'
+      DATABASE_SAVE_DATA_NEW_MESSAGE: 'false'
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      WEBHOOK_GLOBAL_ENABLED: 'false'
+      LOG_LEVEL: ERROR
+      DEL_INSTANCE: 'false'
+      QRCODE_LIMIT: '30'
+    # So no loopback da VM: acessivel por tunel SSH para configurar a
+    # instancia (PRODUCAO.md), nunca pela internet.
+    ports:
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks: [interna]
+
+  # IA local. Numa VM ARM sem GPU um modelo de 7B responde em dezenas de
+  # segundos - serve de ultimo recurso da cadeia, nao de provedor principal.
+  #   docker compose -f docker-compose.prod.yml --profile ia up -d
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    profiles: ['ia']
+    volumes:
+      - ollama_models:/root/.ollama
+    networks: [interna]
+
+networks:
+  interna:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_storage:
+  caddy_data:
+  caddy_config:
+  evolution_instances:
+  ollama_models:
