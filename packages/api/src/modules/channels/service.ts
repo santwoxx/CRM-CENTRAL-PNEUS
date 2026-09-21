@@ -52,7 +52,9 @@ export async function createChannel(input: CreateChannelInput) {
     },
   });
 
-  return channel;
+  // Nunca devolve o blob de credenciais, mesmo cifrado. A resposta segue o
+  // mesmo DTO seguro usado na listagem administrativa.
+  return listChannels(input.orgId).then((channels) => channels.find((item) => item.id === channel.id));
 }
 
 export async function updateChannel(
@@ -88,7 +90,7 @@ export async function updateChannel(
   });
 
   invalidateAdapter(id);
-  return updated;
+  return listChannels(orgId).then((channels) => channels.find((item) => item.id === updated.id));
 }
 
 export async function checkChannelHealth(id: string, orgId: string) {

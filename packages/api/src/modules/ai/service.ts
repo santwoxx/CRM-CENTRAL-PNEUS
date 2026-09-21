@@ -31,6 +31,21 @@ export async function generateAiReply(
     return { replied: false, handoff: false };
   }
 
+  // O job pode ser reexecutado depois de uma queda do worker. A chave liga a
+  // resposta ao inbound que a disparou e evita cobrar/entregar outra resposta.
+  const replyClientMessageId = `ai-reply:${triggerMessageId}`;
+  const existingReply = await prisma.message.findFirst({
+    where: { conversationId, clientMessageId: replyClientMessageId },
+    select: { id: true },
+  });
+  if (existingReply) {
+    logger.info(
+      { conversationId, triggerMessageId, messageId: existingReply.id },
+      'Resposta da IA ja criada para a mensagem de entrada',
+    );
+    return { replied: true, handoff: false };
+  }
+
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
     include: {
@@ -132,7 +147,19 @@ ${shop.contextBlock}` : '',
     });
 
     // Enfileira a resposta gerada para sair pelo WhatsApp
-    await queueAiMessage(conversation.id, aiResult.content.trim());
+    const queuedReply = await queueAiMessage(conversation.id, aiResult.content.trim(), {
+      clientMessageId: replyClientMessageId,
+    });
+    if (!queuedReply) {
+      throw new Error('Nao foi possivel persistir a resposta gerada pela IA');
+    }
+    if (queuedReply.duplicated) {
+      logger.info(
+        { conversationId, triggerMessageId, messageId: queuedReply.messageId },
+        'Resposta concorrente da IA ignorada',
+      );
+      return { replied: true, handoff: false };
+    }
 
     // Registra métrica de consumo
     await prisma.aiUsage.create({

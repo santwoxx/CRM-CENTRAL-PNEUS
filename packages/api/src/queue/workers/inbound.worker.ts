@@ -13,7 +13,7 @@ export function createInboundWorker(): Worker<InboundJobData> {
   const worker = new Worker<InboundJobData>(
     QueueName.INBOUND,
     async (job) => {
-      const { webhookEventId, channelId } = job.data;
+      const { webhookEventId } = job.data;
 
       const event = await prisma.webhookEvent.findUnique({
         where: { id: webhookEventId },

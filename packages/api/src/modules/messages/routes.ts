@@ -98,13 +98,18 @@ export const messageRoutes: FastifyPluginAsync = async (app) => {
         conversationId: req.params.conversationId,
         type: input.type as MessageType,
         content: input.content,
+        payload: input.template
+          ? { template: input.template }
+          : input.interactive
+            ? { interactive: input.interactive }
+            : null,
         mediaId: input.mediaId,
         replyToMessageId: input.replyToMessageId,
         senderType: MessageSenderType.AGENT,
         senderUserId: req.user.id,
         isPrivate: input.isPrivate,
         clientMessageId: input.clientMessageId,
-        bypassWindowCheck: Boolean(input.template),
+        bypassWindowCheck: input.type === MessageType.TEMPLATE,
       });
 
       return reply.code(201).send(result);

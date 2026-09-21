@@ -3,7 +3,7 @@ import { Cpu, Save, Sparkles, Plus, X, DollarSign, BarChart2 } from 'lucide-reac
 import { api } from '../services/api.js';
 
 export const AiConfigPage: React.FC = () => {
-  const [persona, setPersona] = useState<any>(null);
+  const [, setPersona] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState(false);

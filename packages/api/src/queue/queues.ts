@@ -99,7 +99,17 @@ export const allQueues = [
  */
 export async function enqueueInbound(data: InboundJobData): Promise<void> {
   // jobId = id do evento: reentrega da Meta nao vira job duplicado.
-  await inboundQueue.add('process', data, { jobId: jobIdEntrada(data.webhookEventId) });
+  const id = jobIdEntrada(data.webhookEventId);
+  const existing = await inboundQueue.getJob(id);
+
+  if (existing) {
+    // Depois de esgotar as tentativas, o job permanece para auditoria. Uma
+    // nova entrega do provedor ou a varredura pode reativa-lo sem duplicar.
+    if ((await existing.getState()) === 'failed') await existing.retry();
+    return;
+  }
+
+  await inboundQueue.add('process', data, { jobId: id });
 }
 
 export async function enqueueOutbound(data: OutboundJobData, delayMs = 0): Promise<void> {

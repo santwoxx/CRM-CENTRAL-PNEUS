@@ -88,7 +88,13 @@ async function resolveDepartmentId(
     );
   }
 
-  if (conversation.departmentId) return conversation.departmentId;
+  if (conversation.departmentId) {
+    const current = await db.department.findFirst({
+      where: { id: conversation.departmentId, orgId: conversation.orgId, isActive: true },
+      select: { id: true },
+    });
+    if (current) return current.id;
+  }
 
   const contact = await db.contact.findUnique({
     where: { id: conversation.contactId },
@@ -96,7 +102,7 @@ async function resolveDepartmentId(
   });
   if (contact?.lastDepartmentId) {
     const stillActive = await db.department.findFirst({
-      where: { id: contact.lastDepartmentId, isActive: true },
+      where: { id: contact.lastDepartmentId, orgId: conversation.orgId, isActive: true },
       select: { id: true },
     });
     if (stillActive) return stillActive.id;
@@ -126,6 +132,7 @@ export async function findEligibleAgents(
         where: {
           departmentId,
           user: {
+            orgId,
             isActive: true,
             deletedAt: null,
             presence: AgentPresence.ONLINE,

@@ -127,6 +127,7 @@ export async function createOutboundMessage(
         mediaId: input.mediaId ?? null,
         replyToMessageId: input.replyToMessageId ?? null,
         isPrivate,
+        allowOptedOutDelivery: input.bypassOptOut ?? false,
         clientMessageId: input.clientMessageId ?? null,
         // Nota interna nunca vai para o provedor: ja nasce entregue.
         status: isPrivate ? MessageStatus.SENT : MessageStatus.PENDING,
@@ -270,17 +271,21 @@ export async function queueSystemMessage(
 export async function queueAiMessage(
   conversationId: string,
   content: string,
-  options: { payload?: Record<string, unknown>; type?: MessageType } = {},
-): Promise<string | null> {
+  options: {
+    payload?: Record<string, unknown>;
+    type?: MessageType;
+    clientMessageId?: string;
+  } = {},
+): Promise<CreateOutboundResult | null> {
   try {
-    const result = await createOutboundMessage({
+    return await createOutboundMessage({
       conversationId,
       type: options.type ?? MessageType.TEXT,
       content,
       payload: options.payload ?? null,
       senderType: MessageSenderType.AI,
+      clientMessageId: options.clientMessageId ?? null,
     });
-    return result.messageId;
   } catch (error) {
     logger.error({ err: error, conversationId }, 'Falha ao enfileirar mensagem da IA');
     return null;

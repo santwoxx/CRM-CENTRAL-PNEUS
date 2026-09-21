@@ -1,5 +1,12 @@
 import { logger } from '../../../lib/logger.js';
-import { describeOffer, findServices, findTiresByRim, findTiresBySize, formatBRL } from './catalog.js';
+import {
+  catalogoCadastrado,
+  describeOffer,
+  findServices,
+  findTiresByRim,
+  findTiresBySize,
+  formatBRL,
+} from './catalog.js';
 import { ShopIntent, detectIntent, extractVehicle } from './intent.js';
 import {
   extractPartialSize,
@@ -117,6 +124,17 @@ export async function buildShopContext(
 
         facts.offersFound = offers.length;
         facts.cheapestPriceCents = cheapest?.effectivePriceCents ?? null;
+      } else if (!(await catalogoCadastrado(orgId))) {
+        // Catalogo vazio nao e falta de estoque: e o sistema sem saber o que
+        // a loja tem. E o modo de lancamento enquanto os precos reais nao
+        // foram carregados - a IA qualifica e o vendedor cota. Dizer
+        // "SEM ESTOQUE" aqui faria a IA negar pneu que esta na prateleira.
+        lines.push(
+          'CATALOGO DE PNEUS NAO CADASTRADO NO SISTEMA.',
+          `Voce NAO sabe se a loja tem ${size.formatted}: NAO afirme que tem nem que falta.`,
+          'NAO cite preco, marca nem prazo. O vendedor confirma disponibilidade e valor.',
+        );
+        facts.catalogoVazio = true;
       } else {
         // Sem estoque na medida exata: oferecemos o mesmo aro em vez de
         // simplesmente dizer "nao temos" e perder a venda.

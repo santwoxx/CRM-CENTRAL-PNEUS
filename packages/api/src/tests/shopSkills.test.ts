@@ -11,10 +11,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const findMany = vi.fn();
 const serviceFindMany = vi.fn();
+const tireCount = vi.fn();
 
 vi.mock('../db/prisma.js', () => ({
   prisma: {
-    tireProduct: { findMany: (...args: unknown[]) => findMany(...args) },
+    tireProduct: {
+      findMany: (...args: unknown[]) => findMany(...args),
+      count: (...args: unknown[]) => tireCount(...args),
+    },
     serviceItem: { findMany: (...args: unknown[]) => serviceFindMany(...args) },
   },
 }));
@@ -37,6 +41,9 @@ beforeEach(() => {
   findMany.mockReset();
   serviceFindMany.mockReset();
   serviceFindMany.mockResolvedValue([]);
+  tireCount.mockReset();
+  // Por padrao a loja tem catalogo; o cenario de catalogo vazio e explicito.
+  tireCount.mockResolvedValue(16);
 });
 
 describe('contexto da loja entregue a IA', () => {
@@ -72,6 +79,31 @@ describe('contexto da loja entregue a IA', () => {
 
     expect(result.contextBlock).toContain('SEM ESTOQUE');
     expect(result.contextBlock).toContain('Alternativas disponiveis no aro 16');
+  });
+
+  it('catalogo vazio nao vira "sem estoque": a IA nao nega o pneu', async () => {
+    // Lancamento sem precos carregados. A loja pode ter o pneu na prateleira;
+    // o que falta e o sistema saber. Dizer "sem estoque" perde a venda.
+    findMany.mockResolvedValue([]);
+    tireCount.mockResolvedValue(0);
+
+    const result = await buildShopContext('org1', 'tem 175/70R13?');
+
+    expect(result.contextBlock).toContain('CATALOGO DE PNEUS NAO CADASTRADO');
+    expect(result.contextBlock).not.toContain('SEM ESTOQUE');
+    expect(result.contextBlock).not.toContain('R$');
+    // A medida ja foi entendida: e hora do vendedor assumir.
+    expect(result.readyForHandoff).toBe(true);
+  });
+
+  it('com catalogo cadastrado, busca vazia continua sendo falta de estoque', async () => {
+    findMany.mockResolvedValue([]);
+    tireCount.mockResolvedValue(16);
+
+    const result = await buildShopContext('org1', 'tem 175/70R13?');
+
+    expect(result.contextBlock).toContain('SEM ESTOQUE');
+    expect(result.contextBlock).not.toContain('NAO CADASTRADO');
   });
 
   it('proibe cotar preco se o catalogo estiver fora do ar', async () => {

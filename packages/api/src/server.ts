@@ -5,6 +5,7 @@ import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
 import { env, isProduction } from './env.js';
+import { corsOriginOption } from './config/http.js';
 import { isApiPath } from './lib/routes.js';
 import { logger } from './lib/logger.js';
 import { checkDatabase, disconnectDatabase } from './db/prisma.js';
@@ -31,6 +32,7 @@ import { mediaRoutes } from './modules/media/routes.js';
 import { webhookRoutes } from './modules/webhooks/routes.js';
 import { healthRoutes } from './modules/health/routes.js';
 import { simulatorRoutes } from './modules/simulator/routes.js';
+import { ipCliente } from './lib/clientIp.js';
 
 async function buildServer() {
   const app = fastify({
@@ -62,7 +64,7 @@ async function buildServer() {
 
   // Plugins essenciais
   await app.register(cors, {
-    origin: env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : true,
+    origin: corsOriginOption(env.CORS_ORIGINS, isProduction),
     credentials: true,
   });
 
@@ -149,7 +151,7 @@ async function buildServer() {
   await app.register(rateLimit, {
     max: 300,
     timeWindow: '1 minute',
-    keyGenerator: (request) => request.user?.id ?? clientIp(request),
+    keyGenerator: (request) => request.user?.id ?? ipCliente(request),
     // Webhook da Meta chega em rajada legitima e ja e autenticado por HMAC.
     allowList: (request) => (request.raw.url ?? '').startsWith('/webhooks/'),
   });
@@ -233,22 +235,3 @@ main().catch((err) => {
 });
 
 
-/**
- * IP real do cliente.
- *
- * Atras do Cloudflare Tunnel, `request.ip` e sempre 127.0.0.1. O endereco de
- * verdade vem no cabecalho do proxy. So confiamos nele quando a conexao
- * chega mesmo do loopback - se aceitassemos de qualquer origem, qualquer um
- * forjaria o cabecalho e escaparia do limite.
- */
-function clientIp(request: { ip: string; headers: Record<string, unknown> }): string {
-  const doLoopback = request.ip === '127.0.0.1' || request.ip === '::1';
-  if (!doLoopback) return request.ip;
-
-  const cabecalho =
-    (request.headers['cf-connecting-ip'] as string | undefined) ??
-    (request.headers['x-forwarded-for'] as string | undefined);
-
-  const primeiro = cabecalho?.split(',')[0]?.trim();
-  return primeiro || request.ip;
-}

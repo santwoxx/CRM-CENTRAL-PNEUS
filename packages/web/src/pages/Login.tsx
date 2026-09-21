@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { isFirebaseConfigured } from '../services/firebase.js';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, Lock, Mail, ArrowRight } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore.js';
 
 export const LoginPage: React.FC = () => {

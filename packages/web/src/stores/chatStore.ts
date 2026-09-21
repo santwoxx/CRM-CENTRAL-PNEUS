@@ -20,6 +20,7 @@ interface ChatState {
 
   setConversations: (conversations: ConversationSummary[]) => void;
   upsertConversation: (conversation: ConversationSummary) => void;
+  removeConversation: (conversationId: string) => void;
   updateConversationStatus: (id: string, status: ConversationStatus) => void;
   setActiveConversationId: (id: string | null) => void;
   setActiveTab: (tab: InboxTab) => void;
@@ -32,7 +33,7 @@ interface ChatState {
   toggleContactInfo: () => void;
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+export const useChatStore = create<ChatState>((set) => ({
   conversations: [],
   activeConversationId: null,
   activeTab: 'my',
@@ -59,6 +60,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return { conversations: copy };
       }
       return { conversations: [conversation, ...state.conversations] };
+    });
+  },
+
+  removeConversation: (conversationId) => {
+    set((state) => {
+      const messages = { ...state.messages };
+      const typingUsers = { ...state.typingUsers };
+      delete messages[conversationId];
+      delete typingUsers[conversationId];
+
+      return {
+        conversations: state.conversations.filter((item) => item.id !== conversationId),
+        activeConversationId:
+          state.activeConversationId === conversationId ? null : state.activeConversationId,
+        messages,
+        typingUsers,
+      };
     });
   },
 

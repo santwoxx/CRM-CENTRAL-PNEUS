@@ -94,6 +94,7 @@ export class EvolutionAdapter implements ChannelAdapter {
       return this.send('/message/sendWhatsAppAudio', {
         number: this.recipient(params.to),
         audio: base64,
+        ...(params.replyToExternalId ? { quoted: { key: { id: params.replyToExternalId } } } : {}),
       });
     }
 
@@ -110,6 +111,7 @@ export class EvolutionAdapter implements ChannelAdapter {
       media: base64,
       ...(params.fileName ? { fileName: params.fileName } : {}),
       ...(params.caption ? { caption: params.caption } : {}),
+      ...(params.replyToExternalId ? { quoted: { key: { id: params.replyToExternalId } } } : {}),
     });
   }
 
@@ -134,7 +136,11 @@ export class EvolutionAdapter implements ChannelAdapter {
       params.footer ? `_${params.footer}_` : null,
     ].filter((line): line is string => line !== null);
 
-    return this.sendText({ to: params.to, text: lines.join('\n') });
+    return this.sendText({
+      to: params.to,
+      text: lines.join('\n'),
+      replyToExternalId: params.replyToExternalId,
+    });
   }
 
   async sendTemplate(params: SendTemplateParams): Promise<SendResult> {

@@ -12,7 +12,6 @@ import {
   PanelRightOpen,
   PanelRightClose,
   Zap,
-  Image as ImageIcon,
   File,
   Trash2,
 } from 'lucide-react';
@@ -73,7 +72,6 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const {
     messages,
     setMessages,
-    addMessage,
     typingUsers,
     isContactInfoOpen,
     toggleContactInfo,

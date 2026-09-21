@@ -56,3 +56,15 @@ export function disconnectSocket() {
     socket = null;
   }
 }
+
+/** Atualiza a credencial usada no proximo handshake depois de um refresh. */
+export function refreshSocketAuthentication(token: string) {
+  if (!socket) return;
+
+  socket.auth = { token };
+  if (socket.connected) {
+    // O access token contem o id da sessao rotacionada. Um novo handshake
+    // impede que o servidor encerre o socket por continuar preso ao sid antigo.
+    socket.disconnect().connect();
+  }
+}

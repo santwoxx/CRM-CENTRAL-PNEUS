@@ -10,6 +10,8 @@ import {
 import { assertPodeAlterarUsuario, assertPodeAtribuirCargo } from './guard.js';
 import { createUser, deleteUser, listUsers, updateUser } from './service.js';
 import { setPresence } from '../routing/presence.js';
+import { prisma } from '../../db/prisma.js';
+import { NotFoundError } from '../../lib/errors.js';
 
 export const userRoutes: FastifyPluginAsync = async (app) => {
   // Listagem de atendentes e membros da equipe
@@ -38,7 +40,10 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       departmentIds: input.departmentIds,
     });
 
-    return reply.code(201).send(created);
+    // createUser precisa do registro completo internamente, mas hash de senha,
+    // UID social e contadores de bloqueio jamais devem sair na resposta.
+    const safeUser = (await listUsers(req.user.orgId)).find((user) => user.id === created.id);
+    return reply.code(201).send(safeUser);
   });
 
   // Atualização de dados do atendente
@@ -77,6 +82,12 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   app.put<{ Params: { id: string } }>('/:id/presence', async (req, reply) => {
     req.authorize(Permission.USER_FORCE_PRESENCE);
     const input = setPresenceSchema.parse(req.body);
+
+    const target = await prisma.user.findFirst({
+      where: { id: req.params.id, orgId: req.user.orgId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!target) throw new NotFoundError('Usuario');
 
     const updated = await setPresence(req.params.id, input.presence as AgentPresence, { automatic: false });
     return reply.send(updated);

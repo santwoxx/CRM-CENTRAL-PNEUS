@@ -3,8 +3,6 @@ import {
   Search,
   Bot,
   User,
-  Clock,
-  CheckCheck,
   AlertTriangle,
   Flame,
   MessageCircle,

@@ -184,7 +184,9 @@ export async function getSimulatedConversation(
   if (!contact) return vazio;
 
   const conversation = await prisma.conversation.findFirst({
-    where: { contactId: contact.id },
+    // Um numero usado no simulador pode tambem pertencer a um cliente real.
+    // A tela de teste nunca deve abrir o historico do WhatsApp por engano.
+    where: { contactId: contact.id, channel: { type: ChannelType.WEBCHAT } },
     orderBy: { createdAt: 'desc' },
     include: {
       department: { select: { name: true } },
@@ -241,13 +243,50 @@ export async function resetSimulatedContact(orgId: string, phone: string): Promi
 
   const contact = await prisma.contact.findFirst({
     where: { orgId, phone: { in: phoneVariants(normalized) } },
-    select: { id: true },
+    select: {
+      id: true,
+      conversations: {
+        where: { channel: { type: ChannelType.WEBCHAT } },
+        select: { id: true, channelId: true },
+      },
+      identities: {
+        where: { channel: { type: ChannelType.WEBCHAT } },
+        select: { id: true },
+      },
+      _count: { select: { conversations: true, identities: true } },
+    },
   });
   if (!contact) return false;
 
-  // Em cascata: conversas, mensagens e eventos saem junto com o contato.
-  await prisma.contact.delete({ where: { id: contact.id } });
-  logger.info({ phone: normalized }, 'Contato de simulacao removido');
+  const conversationIds = contact.conversations.map((conversation) => conversation.id);
+  const identityIds = contact.identities.map((identity) => identity.id);
+  if (conversationIds.length === 0 && identityIds.length === 0) return false;
+
+  const apenasSimulado =
+    contact._count.conversations === conversationIds.length &&
+    contact._count.identities === identityIds.length;
+
+  await prisma.$transaction(async (tx) => {
+    // Apagar a conversa remove em cascata apenas as mensagens e eventos do
+    // simulador. Conversas e identidades de WhatsApp permanecem intactas.
+    if (conversationIds.length > 0) {
+      await tx.conversation.deleteMany({ where: { id: { in: conversationIds } } });
+    }
+    if (identityIds.length > 0) {
+      await tx.contactIdentity.deleteMany({ where: { id: { in: identityIds } } });
+    }
+
+    // Contato criado exclusivamente pelo simulador pode sair por completo.
+    // Se houver qualquer vinculo real, preservamos o cadastro e seu historico.
+    if (apenasSimulado) {
+      await tx.contact.delete({ where: { id: contact.id } });
+    }
+  });
+
+  logger.info(
+    { phone: normalized, contactRemoved: apenasSimulado, conversations: conversationIds.length },
+    'Dados de simulacao removidos',
+  );
   return true;
 }
 

@@ -2,7 +2,6 @@ import {
   AgentPresence,
   ConversationStatus,
   MessageDirection,
-  MessageSenderType,
   type DashboardMetrics,
 } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';

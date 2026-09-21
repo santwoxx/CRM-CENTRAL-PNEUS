@@ -11,7 +11,7 @@ import {
 } from '@crm/shared';
 import crypto from 'node:crypto';
 import { evaluateFastTriggers, evaluateLeadWarmth } from '../modules/ai/evaluator.js';
-import { encryptJson, decryptJson, verifyMetaSignature, sha256 } from '../lib/crypto.js';
+import { encryptJson, decryptJson, verifyMetaSignature } from '../lib/crypto.js';
 
 describe('1. Normalização de Telefones Brasileiros (Regra do 9º Dígito)', () => {
   it('deve normalizar número com DDD e 8 dígitos adicionando o 9 canônico para celulares', () => {

@@ -41,52 +41,25 @@ export const ACESSOS_AUTORIZADOS: AcessoAutorizado[] = [
   // --- Administracao ---
   {
     email: 'brisasofc@gmail.com',
-    nome: 'Rhuan (Dono)',
-    cargo: UserRole.OWNER,
-    maxConversas: 10,
-  },
-  {
-    email: 'admin@centralpneus.com.br',
-    nome: 'Administrador Central Pneus',
+    nome: 'Natan (Desenvolvedor)',
     cargo: UserRole.OWNER,
     maxConversas: 10,
   },
 
-  // --- Atendimento ---
-  {
-    email: 'carlos@centralpneus.com.br',
-    nome: 'Carlos Mendes (Vendas)',
-    cargo: UserRole.AGENT,
-    setores: ['vendas'],
-    maxConversas: 5,
-  },
-  {
-    email: 'mariana@centralpneus.com.br',
-    nome: 'Mariana Costa (Financeiro)',
-    cargo: UserRole.AGENT,
-    setores: ['financeiro'],
-    maxConversas: 5,
-  },
-  {
-    email: 'roberto@centralpneus.com.br',
-    nome: 'Roberto Mecânica (Oficina)',
-    cargo: UserRole.AGENT,
-    setores: ['oficina'],
-    maxConversas: 5,
-  },
-
-  // --- Exemplos: descomente e troque pelos e-mails reais ---
+  // --- Equipe da loja ---
+  // Ainda vazio: os e-mails reais de cada pessoa entram aqui conforme
+  // chegarem. Enquanto nao houver ninguem com `setores`, TODA conversa vai
+  // ficar parada na fila - o roteador so entrega para quem esta ONLINE e
+  // pertence ao setor. Isso e proposital, nao e defeito: e melhor a conversa
+  // esperar visivel na fila do que ser entregue a ninguem.
+  //
+  // Modelo - copie, troque o e-mail e rode `npm run acessos`:
+  //
   // {
-  //   email: 'supervisor@centralpneus.com.br',
-  //   nome: 'Supervisor de Vendas',
-  //   cargo: UserRole.SUPERVISOR,
-  //   setores: ['vendas', 'oficina'],
-  // },
-  // {
-  //   email: 'amigo@gmail.com',
-  //   nome: 'Amigo (teste)',
-  //   cargo: UserRole.AGENT,
-  //   setores: ['vendas'],
-  //   maxConversas: 3,
+  //   email: 'vendedor@exemplo.com',
+  //   nome: 'Nome da Pessoa',
+  //   cargo: UserRole.AGENT,          // AGENT | SUPERVISOR | ADMIN | OWNER
+  //   setores: ['vendas'],            // vendas | financeiro | oficina
+  //   maxConversas: 5,
   // },
 ];

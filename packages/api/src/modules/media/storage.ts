@@ -2,11 +2,10 @@ import { existsSync, mkdirSync, createReadStream, createWriteStream } from 'node
 import { sep } from 'node:path';
 import { AppError } from '../../lib/errors.js';
 import { stat, unlink } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { env } from '../../env.js';
-import { logger } from '../../lib/logger.js';
 
 export interface StorageDriver {
   write(key: string, stream: Readable): Promise<{ size: number }>;

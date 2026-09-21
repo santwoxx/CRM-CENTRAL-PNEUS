@@ -4,12 +4,11 @@ import { ConversationList } from '../components/ConversationList.js';
 import { ChatArea } from '../components/ChatArea.js';
 import { ContactInfoSidebar } from '../components/ContactInfoSidebar.js';
 import { api } from '../services/api.js';
-import { MessageSquare, ShieldCheck, Sparkles } from 'lucide-react';
+import { MessageSquare, Sparkles } from 'lucide-react';
 import type { ConversationDetail } from '@crm/shared';
 
 export const InboxPage: React.FC = () => {
   const {
-    conversations,
     setConversations,
     activeConversationId,
     setActiveConversationId,

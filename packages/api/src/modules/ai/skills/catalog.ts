@@ -105,6 +105,19 @@ export async function findTiresBySize(
   return products.map(toOffer);
 }
 
+/**
+ * Existe catalogo de pneus cadastrado para esta loja?
+ *
+ * Separa duas situacoes que parecem iguais numa busca vazia e exigem
+ * respostas opostas: "a loja nao tem esse pneu" e "o sistema nao sabe o que
+ * a loja tem". Tratar a segunda como a primeira faz a IA dizer "nao temos"
+ * para um pneu que esta na prateleira - e o cliente vai comprar no vizinho.
+ */
+export async function catalogoCadastrado(orgId: string): Promise<boolean> {
+  const total = await prisma.tireProduct.count({ where: { orgId, isActive: true } });
+  return total > 0;
+}
+
 /** Alternativas no mesmo aro, quando a medida exata acabou no estoque. */
 export async function findTiresByRim(
   orgId: string,

@@ -169,6 +169,64 @@ export const listConversationsSchema = paginationSchema.extend({
 });
 export type ListConversationsQuery = z.infer<typeof listConversationsSchema>;
 
+export const outboundTemplateSchema = z.object({
+  name: z.string().trim().min(1).max(512),
+  language: z.string().trim().min(2).max(10).default('pt_BR'),
+  variables: z.array(z.string().max(1024)).max(100).default([]),
+});
+
+const interactiveButtonSchema = z.object({
+  id: z.string().trim().min(1).max(256),
+  title: z.string().trim().min(1).max(20),
+});
+
+const interactiveListRowSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  title: z.string().trim().min(1).max(24),
+  description: z.string().trim().max(72).optional(),
+});
+
+export const outboundInteractiveSchema = z
+  .object({
+    body: z.string().trim().min(1).max(1024),
+    header: z.string().trim().max(60).optional(),
+    footer: z.string().trim().max(60).optional(),
+    buttons: z.array(interactiveButtonSchema).min(1).max(3).optional(),
+    list: z
+      .object({
+        buttonLabel: z.string().trim().min(1).max(20),
+        sections: z
+          .array(
+            z.object({
+              title: z.string().trim().max(24),
+              rows: z.array(interactiveListRowSchema).min(1).max(10),
+            }),
+          )
+          .min(1)
+          .max(10),
+      })
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (Boolean(data.buttons) === Boolean(data.list)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['buttons'],
+        message: 'Informe botoes ou lista, mas nao os dois',
+      });
+    }
+
+    const totalRows =
+      data.list?.sections.reduce((sum, section) => sum + section.rows.length, 0) ?? 0;
+    if (totalRows > 10) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['list', 'sections'],
+        message: 'A lista aceita no maximo 10 opcoes',
+      });
+    }
+  });
+
 export const sendMessageSchema = z
   .object({
     type: enumOf(MessageType).default(MessageType.TEXT),
@@ -182,13 +240,9 @@ export const sendMessageSchema = z
     /** Chave de idempotencia gerada pelo cliente; impede envio duplicado. */
     clientMessageId: z.string().trim().min(8).max(64).optional(),
     /** Template aprovado, obrigatorio fora da janela de 24h. */
-    template: z
-      .object({
-        name: z.string().min(1),
-        language: z.string().min(2).max(10).default('pt_BR'),
-        variables: z.array(z.string()).default([]),
-      })
-      .optional(),
+    template: outboundTemplateSchema.optional(),
+    /** Menu de botoes ou lista enviado pelo adaptador do canal. */
+    interactive: outboundInteractiveSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.type === MessageType.TEXT && !data.content?.trim()) {
@@ -218,6 +272,30 @@ export const sendMessageSchema = z
         code: z.ZodIssueCode.custom,
         path: ['template'],
         message: 'Informe o template aprovado',
+      });
+    }
+
+    if (data.template && data.type !== MessageType.TEMPLATE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['template'],
+        message: 'O template exige uma mensagem do tipo TEMPLATE',
+      });
+    }
+
+    if (data.type === MessageType.INTERACTIVE && !data.interactive) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['interactive'],
+        message: 'Informe o menu interativo',
+      });
+    }
+
+    if (data.interactive && data.type !== MessageType.INTERACTIVE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['interactive'],
+        message: 'O menu exige uma mensagem do tipo INTERACTIVE',
       });
     }
 

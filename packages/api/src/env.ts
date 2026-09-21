@@ -55,6 +55,9 @@ const envSchema = z
     API_HOST: z.string().default('0.0.0.0'),
     PUBLIC_API_URL: z.string().url().default('http://localhost:3333'),
     CORS_ORIGINS: csv,
+    // Proxies reversos cujo X-Forwarded-For e confiavel (alem do loopback).
+    // Em producao com docker-compose, e o IP fixo do Caddy na rede interna.
+    TRUSTED_PROXY_IPS: csv,
 
     DATABASE_URL: z.string().min(1, 'DATABASE_URL e obrigatoria'),
     REDIS_URL: z.string().min(1, 'REDIS_URL e obrigatoria'),
@@ -98,7 +101,9 @@ const envSchema = z
 
     // Simulador de conversa: permite testar o CRM sem WhatsApp de verdade.
     // Desligue em producao - ele cria conversas reais no banco.
-    SIMULATOR_ENABLED: bool(true),
+    // Ligado por conveniencia local e desligado por padrao em producao. Quem
+    // quiser uma demonstracao publica ainda pode habilitar explicitamente.
+    SIMULATOR_ENABLED: bool(process.env.NODE_ENV !== 'production'),
 
     AI_ENABLED: bool(true),
     // Padrao "ollama": roda na propria maquina, sem chave e sem custo.

@@ -1,7 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Radio, QrCode, CheckCircle, AlertTriangle, RefreshCw, Smartphone, Key, Plus, X } from 'lucide-react';
+import { Radio, RefreshCw, Smartphone, Plus, X } from 'lucide-react';
 import { ChannelType, ChannelStatus } from '@crm/shared';
 import { api } from '../services/api.js';
+
+/**
+ * Token que a Meta envia ao validar o webhook. Era um texto fixo no codigo -
+ * o mesmo para toda instalacao e publico no repositorio. Agora e aleatorio e
+ * aparece no formulario, para ser copiado no painel da Meta.
+ */
+function gerarTokenVerificacao(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Na producao em Docker a Evolution e alcancada pelo nome do servico; na
+ * maquina de desenvolvimento, pelo localhost. "localhost" dentro do container
+ * da API nao aponta para a Evolution - o canal nunca conectaria.
+ */
+function enderecoPadraoEvolution(): string {
+  return window.location.hostname === 'localhost' ? 'http://localhost:8080' : 'http://evolution:8080';
+}
 
 export const ChannelsPage: React.FC = () => {
   const [channels, setChannels] = useState<any[]>([]);
@@ -14,10 +33,10 @@ export const ChannelsPage: React.FC = () => {
   const [accessToken, setAccessToken] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [appSecret, setAppSecret] = useState('');
-  const [verifyToken, setVerifyToken] = useState('central-pneus-webhook-token');
+  const [verifyToken, setVerifyToken] = useState(gerarTokenVerificacao);
 
   // Evolution Form
-  const [baseUrl, setBaseUrl] = useState('http://localhost:8080');
+  const [baseUrl, setBaseUrl] = useState(enderecoPadraoEvolution);
   const [apiKey, setApiKey] = useState('');
   const [instance, setInstance] = useState('central-pneus');
 
@@ -51,6 +70,8 @@ export const ChannelsPage: React.FC = () => {
 
       setIsModalOpen(false);
       setName('');
+      // Cada canal com o proprio token: um vazado nao abre os outros.
+      setVerifyToken(gerarTokenVerificacao());
       loadChannels();
     } catch (err: any) {
       alert(err.message || 'Falha ao conectar canal');
@@ -120,6 +141,18 @@ export const ChannelsPage: React.FC = () => {
                     <p className="text-xs text-slate-400 font-mono mt-0.5">
                       {c.identifier || 'Número não vinculado'} • {c.type}
                     </p>
+                    {/* Sem estes dados nao ha como configurar o webhook na Meta nem na Evolution. */}
+                    <p className="text-[11px] text-slate-500 mt-1.5">
+                      ID do canal: <code className="text-slate-300 select-all">{c.id}</code>
+                    </p>
+                    {c.type === ChannelType.WHATSAPP_CLOUD && (
+                      <p className="text-[11px] text-slate-500 break-all">
+                        Webhook na Meta:{' '}
+                        <code className="text-slate-300 select-all">
+                          {`${window.location.origin}/webhooks/whatsapp-cloud/${c.id}`}
+                        </code>
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -246,6 +279,22 @@ export const ChannelsPage: React.FC = () => {
                       placeholder="Segredo do app para validar HMAC"
                       className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 font-mono text-[11px]"
                     />
+                  </div>
+                  <div>
+                    <label htmlFor="canal-verify-token" className="block font-semibold text-slate-300 mb-1">
+                      Verify Token do webhook
+                    </label>
+                    <input
+                      id="canal-verify-token"
+                      type="text"
+                      required
+                      value={verifyToken}
+                      onChange={(e) => setVerifyToken(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 font-mono text-[11px] select-all"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Gerado agora. Cole este mesmo valor no campo Verify Token ao cadastrar o webhook na Meta.
+                    </p>
                   </div>
                 </div>
               ) : (

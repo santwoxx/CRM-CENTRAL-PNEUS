@@ -1,8 +1,6 @@
 import {
   ConversationEventType,
   ConversationStatus,
-  Room,
-  UserRole,
   type ListConversationsQuery,
 } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
@@ -15,6 +13,7 @@ import { emitConversationUpdated } from '../../realtime/emitter.js';
 import { routeConversation, transferConversation } from '../routing/router.js';
 import { queueSystemMessage } from '../messages/outbox.js';
 import { assertConversationAccess, conversationVisibilityWhere, type ConversationAccessSubject } from './access.js';
+import { conversationRooms } from '../../realtime/rooms.js';
 
 export async function listConversations(
   orgId: string,
@@ -244,12 +243,12 @@ export async function deleteConversation(
 
   // Tira a conversa da tela de quem estava olhando.
   await publishRealtime(
-    [
-      Room.conversation(conversationId),
-      Room.orgAdmin(orgId),
-      ...(conversation.departmentId ? [Room.department(conversation.departmentId)] : []),
-      ...(conversation.assignedUserId ? [Room.user(conversation.assignedUserId)] : []),
-    ],
+    conversationRooms({
+      orgId,
+      conversationId,
+      departmentId: conversation.departmentId,
+      assignedUserId: conversation.assignedUserId,
+    }),
     'conversation:removed',
     { conversationId, reason: 'excluida-pelo-administrador' },
   );

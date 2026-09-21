@@ -1,6 +1,7 @@
 import { LifecycleStage } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { assertUsersBelongToOrg } from '../tenancy/guards.js';
 
 export interface ListContactsQuery {
   orgId: string;
@@ -118,6 +119,10 @@ export async function updateContact(
 ) {
   const contact = await prisma.contact.findFirst({ where: { id, orgId } });
   if (!contact) throw new NotFoundError('Contato');
+
+  if (input.preferredAgentId) {
+    await assertUsersBelongToOrg([input.preferredAgentId], orgId);
+  }
 
   const updated = await prisma.contact.update({
     where: { id },

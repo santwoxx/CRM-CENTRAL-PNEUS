@@ -5,9 +5,10 @@ import { usePresenceStore } from '../stores/presenceStore.js';
 import { useAuthStore } from '../stores/authStore.js';
 
 export function useSocketEvents() {
-  const { token, user } = useAuthStore();
+  const { token } = useAuthStore();
   const {
     upsertConversation,
+    removeConversation,
     updateConversationStatus,
     addMessage,
     updateMessageStatus,
@@ -31,6 +32,10 @@ export function useSocketEvents() {
 
     socket.on('conversation:assigned', ({ conversation }) => {
       upsertConversation(conversation);
+    });
+
+    socket.on('conversation:removed', ({ conversationId }) => {
+      removeConversation(conversationId);
     });
 
     socket.on('conversation:status', ({ conversationId, status }) => {
@@ -84,6 +89,7 @@ export function useSocketEvents() {
       socket.off('conversation:created');
       socket.off('conversation:updated');
       socket.off('conversation:assigned');
+      socket.off('conversation:removed');
       socket.off('conversation:status');
       socket.off('message:new');
       socket.off('message:status');
@@ -94,7 +100,7 @@ export function useSocketEvents() {
       socket.off('queue:updated');
       socket.off('system:alert');
     };
-  }, [token, upsertConversation, updateConversationStatus, addMessage, updateMessageStatus, setTyping, setAgents, updateAgentPresence, updateQueueStats, addAlert]);
+  }, [token, upsertConversation, removeConversation, updateConversationStatus, addMessage, updateMessageStatus, setTyping, setAgents, updateAgentPresence, updateQueueStats, addAlert]);
 
   // Se a conversa ativa mudar, inscreve o socket na sala dessa conversa
   useEffect(() => {

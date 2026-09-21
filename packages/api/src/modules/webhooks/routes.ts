@@ -1,12 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { ChannelType } from '@crm/shared';
-import { env } from '../../env.js';
 import { prisma } from '../../db/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { safeCompare, verifyMetaSignature } from '../../lib/crypto.js';
 import { getChannelCredentials } from '../../channels/registry.js';
 import { ingestWebhook } from '../messages/inbound.js';
+import { env } from '../../env.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -76,7 +76,9 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(200).type('text/plain').send(challenge);
     }
 
-    logger.warn({ channelId, token }, 'Falha na verificacao do webhook do WhatsApp Cloud: token incorreto');
+    // O token nunca entra no log: ele e uma credencial compartilhada e o log
+    // costuma ser acessivel por mais pessoas que a configuracao do canal.
+    logger.warn({ channelId }, 'Falha na verificacao do webhook do WhatsApp Cloud: token incorreto');
     return reply.code(403).send('Token de verificacao invalido');
   });
 
@@ -95,14 +97,28 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     const creds = await getChannelCredentials<{ appSecret: string }>(channelId);
     const signature = req.headers['x-hub-signature-256'] as string | undefined;
 
-    // Se o appSecret estiver configurado e houver assinatura, valida
-    if (creds?.appSecret && signature) {
-      const rawBody = Buffer.from(JSON.stringify(req.body));
-      const isValid = verifyMetaSignature(rawBody, signature, creds.appSecret);
-      if (!isValid) {
-        logger.warn({ channelId }, 'Assinatura HMAC invalida no webhook da Meta');
-        // Apenas loga aviso para evitar descartar eventos legítimos se o parser alterou espaçamento do JSON
-      }
+    if (!creds?.appSecret) {
+      logger.error({ channelId }, 'Webhook da Meta sem App Secret configurado');
+      return reply.code(503).send({
+        error: {
+          code: 'WEBHOOK_NOT_CONFIGURED',
+          message: 'Canal sem App Secret para validar o webhook',
+        },
+      });
+    }
+
+    // Falha fechada: aceitar um evento sem HMAC permitiria que qualquer
+    // pessoa que descobrisse o channelId injetasse mensagens no atendimento.
+    // A Meta assina exatamente os bytes recebidos, preservados pelo parser
+    // acima; reserializar req.body muda espacos/ordem e invalida a assinatura.
+    if (!webhookMetaAutentico(req.rawWebhookBody, signature, creds.appSecret)) {
+      logger.warn(
+        { channelId, hasSignature: Boolean(signature), hasRawBody: Boolean(req.rawWebhookBody) },
+        'Assinatura HMAC invalida no webhook da Meta',
+      );
+      return reply.code(401).send({
+        error: { code: 'INVALID_WEBHOOK_SIGNATURE', message: 'Assinatura invalida' },
+      });
     }
 
     // Ingestão imediata e gravação no banco
@@ -113,6 +129,34 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
   // 3. Recebimento de eventos da Evolution API (POST)
   app.post<{ Params: { channelId: string } }>('/evolution/:channelId', async (req, reply) => {
     const { channelId } = req.params;
+
+    // A Evolution nao assina o corpo como a Meta. Sem um segredo, qualquer um
+    // que descobrisse o channelId injetaria mensagens de "cliente" - e cada
+    // uma dispara resposta da IA, que e paga, sem limite de taxa, porque
+    // webhooks sao isentos dele. Falha fechada, como no webhook da Meta.
+    if (!env.EVOLUTION_WEBHOOK_SECRET) {
+      logger.error({ channelId }, 'Webhook da Evolution sem EVOLUTION_WEBHOOK_SECRET configurado');
+      return reply.code(503).send({
+        error: {
+          code: 'WEBHOOK_NOT_CONFIGURED',
+          message: 'Defina EVOLUTION_WEBHOOK_SECRET para receber mensagens da Evolution',
+        },
+      });
+    }
+
+    // Autentica antes de ir ao banco: spam nao gera consulta e a resposta
+    // nao revela se o canal existe.
+    const tokenRecebido =
+      (req.headers['x-webhook-token'] as string | undefined) ??
+      (req.query as { token?: string } | undefined)?.token;
+
+    if (!webhookEvolutionAutentico(tokenRecebido, env.EVOLUTION_WEBHOOK_SECRET)) {
+      logger.warn({ channelId, temToken: Boolean(tokenRecebido) }, 'Token invalido no webhook da Evolution');
+      return reply.code(401).send({
+        error: { code: 'INVALID_WEBHOOK_TOKEN', message: 'Token invalido' },
+      });
+    }
+
     const channel = await prisma.channel.findUnique({
       where: { id: channelId },
       select: { id: true, type: true },
@@ -126,3 +170,21 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send({ ok: true, ...result });
   });
 };
+
+/** Exportada para testar a fronteira criptografica sem banco nem provedor. */
+export function webhookMetaAutentico(
+  rawBody: Buffer | undefined,
+  signature: string | undefined,
+  appSecret: string,
+): boolean {
+  return Boolean(rawBody && verifyMetaSignature(rawBody, signature, appSecret));
+}
+
+/**
+ * Confere o token do webhook da Evolution em tempo constante.
+ * Exportada para testar a fronteira sem banco nem provedor.
+ */
+export function webhookEvolutionAutentico(recebido: string | undefined, segredo: string): boolean {
+  if (!segredo || !recebido) return false;
+  return safeCompare(recebido, segredo);
+}

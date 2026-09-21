@@ -19,7 +19,7 @@
     "dev:web": "npm run dev -w @crm/web",
     "typecheck": "npm run typecheck -w @crm/shared && npm run typecheck -w @crm/api && npm run typecheck -w @crm/web",
     "lint": "eslint .",
-    "test": "npm run test -w @crm/api",
+    "test": "npm run test -w @crm/api && npm run test -w @crm/web",
     "db:generate": "prisma generate --schema packages/api/prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema packages/api/prisma/schema.prisma",
     "db:deploy": "prisma migrate deploy --schema packages/api/prisma/schema.prisma",

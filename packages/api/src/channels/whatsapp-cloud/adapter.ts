@@ -171,7 +171,12 @@ export class WhatsAppCloudAdapter implements ChannelAdapter {
       };
     }
 
-    return this.post({ to: params.to, type: 'interactive', interactive });
+    return this.post({
+      to: params.to,
+      type: 'interactive',
+      ...(params.replyToExternalId ? { context: { message_id: params.replyToExternalId } } : {}),
+      interactive,
+    });
   }
 
   async sendTemplate(params: SendTemplateParams): Promise<SendResult> {

@@ -70,6 +70,28 @@ export async function ingestWebhook(
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         result.duplicated += 1;
         logger.debug({ channelId, externalId }, 'Evento duplicado descartado');
+
+        // A primeira entrega pode ter sido gravada no banco e falhado antes
+        // de chegar ao Redis. Nesse caso, a reentrega e justamente a chance
+        // de recuperar o evento; chama-la apenas de duplicada o perderia.
+        const existing = await prisma.webhookEvent.findUnique({
+          where: {
+            channelId_externalId_eventType: {
+              channelId,
+              externalId,
+              eventType: event.kind,
+            },
+          },
+          select: { id: true, status: true },
+        });
+        if (
+          existing &&
+          (existing.status === WebhookEventStatus.RECEIVED ||
+            existing.status === WebhookEventStatus.PROCESSING ||
+            existing.status === WebhookEventStatus.FAILED)
+        ) {
+          await enqueueInbound({ webhookEventId: existing.id, channelId });
+        }
         continue;
       }
       throw error;
@@ -77,6 +99,36 @@ export async function ingestWebhook(
   }
 
   return result;
+}
+
+/** Reenfileira eventos que ficaram salvos durante uma indisponibilidade do Redis. */
+export async function sweepInbound(olderThanSeconds = 30): Promise<number> {
+  const threshold = new Date(Date.now() - olderThanSeconds * 1_000);
+  const stuck = await prisma.webhookEvent.findMany({
+    where: {
+      status: {
+        in: [
+          WebhookEventStatus.RECEIVED,
+          WebhookEventStatus.PROCESSING,
+          WebhookEventStatus.FAILED,
+        ],
+      },
+      receivedAt: { lt: threshold },
+      attempts: { lt: 15 },
+    },
+    select: { id: true, channelId: true },
+    orderBy: { receivedAt: 'asc' },
+    take: 200,
+  });
+
+  for (const event of stuck) {
+    await enqueueInbound({ webhookEventId: event.id, channelId: event.channelId });
+  }
+
+  if (stuck.length > 0) {
+    logger.warn({ count: stuck.length }, 'Webhooks presos reenfileirados');
+  }
+  return stuck.length;
 }
 
 /** Reconstroi as datas que o JSON transformou em string. */

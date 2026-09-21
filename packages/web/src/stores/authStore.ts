@@ -81,8 +81,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       api.setToken(token);
       const user = await api.get('/auth/me');
-      set({ user, token, isLoading: false });
-      getSocket(token);
+      // /auth/me pode ter renovado a sessao no caminho. Nesse caso usamos o
+      // token novo tambem no estado e no WebSocket, nao o valor expirado lido
+      // antes da requisicao.
+      const currentToken = api.getToken();
+      set({ user, token: currentToken, isLoading: false });
+      if (currentToken) getSocket(currentToken);
     } catch {
       api.setToken(null);
       set({ user: null, token: null, isLoading: false });

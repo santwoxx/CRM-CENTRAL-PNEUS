@@ -36,12 +36,15 @@ export const authPlugin: FastifyPluginAsync = fp(async (fastify) => {
     return can(this.user.role as UserRole, permission);
   });
 
-  fastify.addHook('preHandler', async (request, reply) => {
+  fastify.addHook('preHandler', async (request, _reply) => {
     // Rotas públicas que não exigem autenticação
     const url = request.url;
     if (
       url.startsWith('/auth/login') ||
       url.startsWith('/auth/refresh') ||
+      // Logout usa o refresh token HttpOnly e precisa funcionar mesmo quando
+      // o access token ja expirou. A rota valida a origem antes de revogar.
+      url.startsWith('/auth/logout') ||
       // Login social: o proprio token do Google e a credencial.
       url.startsWith('/auth/google') ||
       // Diz a tela de login quais formas de entrar existem. Nao expoe nada

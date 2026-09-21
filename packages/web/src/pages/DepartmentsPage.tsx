@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Plus, Edit2, Trash2, Users, Clock, Check, X } from 'lucide-react';
+import { Layers, Plus, Edit2, X } from 'lucide-react';
 import { api } from '../services/api.js';
 
 export const DepartmentsPage: React.FC = () => {

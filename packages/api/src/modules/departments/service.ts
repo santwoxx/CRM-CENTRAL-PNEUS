@@ -1,6 +1,7 @@
 import { AgentPresence, ConversationStatus, RoutingStrategy } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
 import { ConflictError, NotFoundError } from '../../lib/errors.js';
+import { assertUsersBelongToOrg } from '../tenancy/guards.js';
 
 export interface CreateDepartmentInput {
   orgId: string;
@@ -82,6 +83,8 @@ export async function listDepartments(orgId: string) {
 export async function createDepartment(input: CreateDepartmentInput) {
   const slug = input.slug || slugify(input.name);
 
+  await assertUsersBelongToOrg(input.memberIds ?? [], input.orgId);
+
   const existing = await prisma.department.findFirst({
     where: { orgId: input.orgId, slug },
   });
@@ -119,6 +122,10 @@ export async function updateDepartment(
 ) {
   const department = await prisma.department.findFirst({ where: { id, orgId } });
   if (!department) throw new NotFoundError('Setor');
+
+  if (input.memberIds !== undefined) {
+    await assertUsersBelongToOrg(input.memberIds, orgId);
+  }
 
   await prisma.$transaction(async (tx) => {
     if (input.memberIds !== undefined) {

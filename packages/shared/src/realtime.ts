@@ -18,6 +18,8 @@ export const Room = {
   user: (userId: string) => `user:${userId}`,
   /** Fila e eventos de um setor. */
   department: (departmentId: string) => `dept:${departmentId}`,
+  /** Conversas atribuidas que apenas supervisores do setor podem acompanhar. */
+  departmentSupervisor: (departmentId: string) => `dept:${departmentId}:supervisors`,
   /** Mensagens de uma conversa aberta na tela. */
   conversation: (conversationId: string) => `conv:${conversationId}`,
   /** Painel do admin: recebe o firehose da organizacao. */
@@ -107,6 +109,8 @@ export interface ClientToServerEvents {
 export interface SocketData {
   userId: string;
   orgId: string;
+  /** Sessao que autenticou a conexao; revalidada enquanto o socket permanece aberto. */
+  sessionId: string;
   role: string;
   departmentIds: string[];
 }

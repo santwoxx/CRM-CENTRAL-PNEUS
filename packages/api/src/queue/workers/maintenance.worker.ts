@@ -1,5 +1,5 @@
 import { Worker } from 'bullmq';
-import { ConversationEventType, ConversationStatus } from '@crm/shared';
+import { ConversationEventType, ConversationStatus, WebhookEventStatus } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { createQueueConnection } from '../../lib/redis.js';
@@ -8,6 +8,7 @@ import { applyAutoAway } from '../../modules/routing/presence.js';
 import { sweepOutbox } from '../../modules/messages/outbox.js';
 import { drainQueue, escalateStaleQueue } from '../../modules/routing/router.js';
 import { emitSystemAlert } from '../../realtime/emitter.js';
+import { sweepInbound } from '../../modules/messages/inbound.js';
 
 export function createMaintenanceWorker(): Worker<MaintenanceJobData> {
   const connection = createQueueConnection('worker:maintenance');
@@ -116,9 +117,20 @@ export function createMaintenanceWorker(): Worker<MaintenanceJobData> {
           break;
 
         case MaintenanceTask.WEBHOOK_CLEANUP: {
+          await sweepInbound();
           const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
           await prisma.webhookEvent.deleteMany({
-            where: { receivedAt: { lt: sevenDaysAgo } },
+            where: {
+              receivedAt: { lt: sevenDaysAgo },
+              OR: [
+                {
+                  status: {
+                    in: [WebhookEventStatus.PROCESSED, WebhookEventStatus.SKIPPED],
+                  },
+                },
+                { status: WebhookEventStatus.FAILED, attempts: { gte: 15 } },
+              ],
+            },
           });
           break;
         }

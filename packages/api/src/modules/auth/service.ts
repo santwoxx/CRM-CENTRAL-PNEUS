@@ -24,6 +24,7 @@ import {
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_DURATION_MS = 15 * 60_000;
+const ROTATION_RACE_WINDOW_MS = 10_000;
 
 /** Hash descartavel: faz o caminho "usuario nao existe" custar o mesmo tempo. */
 const DUMMY_HASH_PROMISE = hashPassword('senha-inexistente-para-igualar-o-tempo');
@@ -35,7 +36,8 @@ export interface AuthContext {
 
 export interface AuthResult {
   accessToken: string;
-  refreshToken: string;
+  /** Ausente quando outra aba acabou de rotacionar o mesmo cookie. */
+  refreshToken?: string;
   expiresIn: number;
   user: AuthenticatedUser;
 }
@@ -145,10 +147,9 @@ async function registerFailedAttempt(userId: string, currentAttempts: number): P
 /**
  * Rotaciona o refresh token.
  *
- * O token antigo e revogado no mesmo instante em que o novo nasce. Se um token
- * ja revogado for apresentado, tratamos como roubo de sessao e derrubamos
- * TODAS as sessoes do usuario - e o comportamento correto quando um refresh
- * token vaza.
+ * O token antigo e revogado no mesmo instante em que o novo nasce. Uma janela
+ * curta reconhece duas abas que enviaram o mesmo cookie ao mesmo tempo; fora
+ * dela, reutilizar um token revogado continua derrubando todas as sessoes.
  */
 export async function refresh(rawToken: string, context: AuthContext = {}): Promise<AuthResult> {
   const hash = hashRefreshToken(rawToken);
@@ -171,18 +172,6 @@ export async function refresh(rawToken: string, context: AuthContext = {}): Prom
     throw new UnauthorizedError('Sessao invalida', 'INVALID_REFRESH_TOKEN');
   }
 
-  if (session.revokedAt) {
-    logger.error(
-      { userId: session.userId, sessionId: session.id },
-      'Refresh token ja revogado foi reapresentado: derrubando todas as sessoes',
-    );
-    await prisma.session.updateMany({
-      where: { userId: session.userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-    throw new UnauthorizedError('Sessao invalidada por seguranca', 'REFRESH_TOKEN_REUSED');
-  }
-
   if (session.expiresAt <= new Date()) {
     throw new UnauthorizedError('Sessao expirada', 'REFRESH_TOKEN_EXPIRED');
   }
@@ -191,17 +180,28 @@ export async function refresh(rawToken: string, context: AuthContext = {}): Prom
     throw new ForbiddenError('Usuario desativado', 'USER_INACTIVE');
   }
 
+  if (session.revokedAt) {
+    const recovered = await recoverConcurrentRotation(session, context);
+    if (recovered) return recovered;
+    return rejectRefreshReuse(session.userId, session.id);
+  }
+
   const rotated = await prisma.$transaction(async (tx) => {
-    await tx.session.update({
-      where: { id: session.id },
-      data: { revokedAt: new Date() },
+    const rotatedAt = new Date();
+    const claimed = await tx.session.updateMany({
+      where: { id: session.id, revokedAt: null },
+      data: { revokedAt: rotatedAt, lastUsedAt: rotatedAt },
     });
+
+    // Outra requisicao venceu a corrida enquanto esta esperava o lock.
+    if (claimed.count === 0) return null;
 
     const { token, hash: nextHash } = createRefreshToken();
     const created = await tx.session.create({
       data: {
         userId: session.userId,
         refreshTokenHash: nextHash,
+        rotatedFromId: session.id,
         expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
         ipAddress: context.ipAddress ?? session.ipAddress,
         userAgent: context.userAgent?.slice(0, 500) ?? session.userAgent,
@@ -210,6 +210,29 @@ export async function refresh(rawToken: string, context: AuthContext = {}): Prom
 
     return { id: created.id, token };
   });
+
+  if (!rotated) {
+    const current = await prisma.session.findUnique({
+      where: { refreshTokenHash: hash },
+      include: {
+        user: {
+          include: {
+            organization: { select: { id: true, name: true } },
+            departments: {
+              include: { department: { select: { id: true, name: true, color: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    if (current) {
+      const recovered = await recoverConcurrentRotation(current, context);
+      if (recovered) return recovered;
+    }
+
+    return rejectRefreshReuse(session.userId, session.id);
+  }
 
   const accessToken = await signAccessToken({
     sub: session.user.id,
@@ -224,6 +247,100 @@ export async function refresh(rawToken: string, context: AuthContext = {}): Prom
     expiresIn: 15 * 60,
     user: toAuthenticatedUser(session.user),
   };
+}
+
+type RefreshSession = {
+  id: string;
+  userId: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  revokedAt: Date | null;
+  user: UserWithRelations & { deletedAt: Date | null };
+};
+
+async function recoverConcurrentRotation(
+  session: RefreshSession,
+  context: AuthContext,
+): Promise<AuthResult | null> {
+  if (!isConcurrentRotation(session, context)) return null;
+
+  const successor = await prisma.session.findUnique({
+    where: { rotatedFromId: session.id },
+    select: {
+      id: true,
+      expiresAt: true,
+      revokedAt: true,
+      ipAddress: true,
+      userAgent: true,
+    },
+  });
+
+  const now = new Date();
+  if (
+    !successor ||
+    successor.revokedAt ||
+    successor.expiresAt <= now ||
+    successor.ipAddress !== context.ipAddress ||
+    successor.userAgent !== normalizeUserAgent(context.userAgent)
+  ) {
+    return null;
+  }
+
+  logger.info(
+    { userId: session.userId, sessionId: session.id, successorId: successor.id },
+    'Refresh concorrente recuperado sem revogar a sessao',
+  );
+
+  return {
+    accessToken: await signAccessToken({
+      sub: session.user.id,
+      orgId: session.user.orgId,
+      role: session.user.role as UserRole,
+      sid: successor.id,
+    }),
+    // A primeira resposta da corrida ja atualiza o cookie compartilhado entre
+    // abas. Nao conhecemos o valor cru do sucessor e nao sobrescrevemos o
+    // navegador com o token antigo.
+    expiresIn: 15 * 60,
+    user: toAuthenticatedUser(session.user),
+  };
+}
+
+export function isConcurrentRotation(
+  session: Pick<RefreshSession, 'ipAddress' | 'userAgent' | 'revokedAt'>,
+  context: AuthContext,
+  now = Date.now(),
+): boolean {
+  if (!session.revokedAt) return false;
+
+  const age = now - session.revokedAt.getTime();
+  if (age < 0 || age > ROTATION_RACE_WINDOW_MS) return false;
+
+  const userAgent = normalizeUserAgent(context.userAgent);
+  return Boolean(
+    session.ipAddress &&
+      session.userAgent &&
+      context.ipAddress &&
+      userAgent &&
+      session.ipAddress === context.ipAddress &&
+      session.userAgent === userAgent,
+  );
+}
+
+async function rejectRefreshReuse(userId: string, sessionId: string): Promise<never> {
+  logger.error(
+    { userId, sessionId },
+    'Refresh token ja revogado foi reapresentado: derrubando todas as sessoes',
+  );
+  await prisma.session.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  throw new UnauthorizedError('Sessao invalidada por seguranca', 'REFRESH_TOKEN_REUSED');
+}
+
+function normalizeUserAgent(userAgent: string | null | undefined): string | null {
+  return userAgent?.slice(0, 500) ?? null;
 }
 
 export async function logout(rawToken: string): Promise<void> {

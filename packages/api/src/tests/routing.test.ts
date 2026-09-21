@@ -204,6 +204,25 @@ function membro(
 }
 
 describe('findEligibleAgents: quem pode receber agora', () => {
+  it('filtra membros do setor pela mesma organizacao da conversa', async () => {
+    let filtro: unknown;
+    const db = {
+      departmentMember: {
+        findMany: async (args: unknown) => {
+          filtro = args;
+          return [];
+        },
+      },
+      conversation: { groupBy: async () => [] },
+    } as unknown as Db;
+
+    await findEligibleAgents(db, 'setor-1', 'org-segura');
+
+    expect(filtro).toMatchObject({
+      where: { departmentId: 'setor-1', user: { orgId: 'org-segura' } },
+    });
+  });
+
   it('setor sem nenhum membro devolve lista vazia', async () => {
     // E o caso que deixou duas conversas presas na fila: o unico usuario
     // online nao pertencia ao setor. A funcao esta certa em nao devolver

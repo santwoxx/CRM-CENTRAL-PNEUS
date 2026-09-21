@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import {
-  User,
   Phone,
   Mail,
-  FileText,
   Flame,
   Tag,
-  ShieldCheck,
   Bot,
   Plus,
   X,

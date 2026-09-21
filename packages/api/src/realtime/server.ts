@@ -3,12 +3,11 @@ import { Server } from 'socket.io';
 import {
   AgentPresence,
   Room,
-  UserRole,
   type ClientToServerEvents,
   type ServerToClientEvents,
   type SocketData,
 } from '@crm/shared';
-import { env } from '../env.js';
+import { env, isProduction } from '../env.js';
 import { logger } from '../lib/logger.js';
 import { prisma } from '../db/prisma.js';
 import { verifyAccessToken } from '../modules/auth/tokens.js';
@@ -21,15 +20,62 @@ import {
   touch,
   getPresenceSnapshot,
 } from '../modules/routing/presence.js';
-import { subscribeRealtime, type RealtimeEnvelope } from './bus.js';
+import { publishRealtime, subscribeRealtime, type RealtimeEnvelope } from './bus.js';
+import {
+  dispatchRealtimeEnvelope,
+  refreshSocketAuthorization,
+} from './authorization.js';
+import { baseRealtimeRooms } from './rooms.js';
+
+const SOCKET_AUTH_REVALIDATION_MS = 15_000;
+
+/** Politica de origem usada tambem pelo teste de regressao do gateway. */
+export function isSocketOriginAllowed(
+  origin: string | undefined,
+  host: string | undefined,
+  configuredOrigins: string[],
+  production: boolean,
+): boolean {
+  if (!origin) return true;
+  if (configuredOrigins.includes(origin)) return true;
+  if (!production) return true;
+  if (!host) return false;
+
+  try {
+    const requestHost = host.split(',')[0]?.trim().toLowerCase();
+    return new URL(origin).host.toLowerCase() === requestHost;
+  } catch {
+    return false;
+  }
+}
 
 export function setupSocketServer(httpServer: HttpServer): Server {
   const io = new Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>(
     httpServer,
     {
       cors: {
-        origin: env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : '*',
+        origin:
+          env.CORS_ORIGINS.length > 0
+            ? env.CORS_ORIGINS
+            : isProduction
+              ? false
+              : true,
         credentials: true,
+      },
+      allowRequest: (request, callback) => {
+        const forwardedHost = request.headers['x-forwarded-host'];
+        const host =
+          (typeof forwardedHost === 'string' ? forwardedHost : forwardedHost?.[0]) ??
+          request.headers.host;
+        callback(
+          null,
+          isSocketOriginAllowed(
+            request.headers.origin,
+            host,
+            env.CORS_ORIGINS,
+            isProduction,
+          ),
+        );
       },
       pingInterval: 25_000,
       pingTimeout: 20_000,
@@ -67,6 +113,7 @@ export function setupSocketServer(httpServer: HttpServer): Server {
       socket.data = {
         userId: user.id,
         orgId: user.orgId,
+        sessionId: claims.sid,
         role: user.role,
         departmentIds: user.departments.map((d) => d.departmentId),
       };
@@ -79,21 +126,11 @@ export function setupSocketServer(httpServer: HttpServer): Server {
   });
 
   io.on('connection', async (socket) => {
-    const { userId, orgId, role, departmentIds } = socket.data;
+    const { userId, orgId } = socket.data;
     logger.debug({ userId, socketId: socket.id }, 'Novo socket conectado');
 
     // 1. Aloca salas base
-    await socket.join(Room.user(userId));
-    await socket.join(Room.presence(orgId));
-
-    for (const deptId of departmentIds) {
-      await socket.join(Room.department(deptId));
-    }
-
-    // Administradores e Supervisores recebem a sala global da organização
-    if (role === UserRole.ADMIN || role === UserRole.OWNER || role === UserRole.SUPERVISOR) {
-      await socket.join(Room.orgAdmin(orgId));
-    }
+    await socket.join([...baseRealtimeRooms(socket.data)]);
 
     // 2. Registra presença
     await registerConnection(userId, socket.id);
@@ -106,21 +143,39 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     // de digitacao para uma sala que ele nunca teve permissao de abrir.
     const subscribedConversationIds = new Set<string>();
 
-    // 3. Eventos do cliente
-    socket.on('conversation:subscribe', async (conversationId, ack) => {
+    async function authorizeConversation(conversationId: string): Promise<SocketData | null> {
+      const identity = await refreshSocketAuthorization(socket);
+      if (!identity) return null;
+
       const conversation = await prisma.conversation.findFirst({
-        where: { id: conversationId, orgId },
+        where: { id: conversationId, orgId: identity.orgId },
         select: { id: true, orgId: true, departmentId: true, assignedUserId: true },
       });
 
       if (
         !conversation ||
-        // `id`, nao `userId`: e o nome do campo em ConversationAccessSubject.
-        // Com a chave errada, `subject.id` ficava undefined e a comparacao com
-        // `assignedUserId` nunca batia - o atendente era barrado da PROPRIA
-        // conversa. O `as never` que estava aqui escondia isso do compilador.
-        !canAccessConversation({ id: userId, orgId, role, departmentIds }, conversation, 'view')
+        !canAccessConversation(
+          {
+            id: identity.userId,
+            orgId: identity.orgId,
+            role: identity.role,
+            departmentIds: identity.departmentIds,
+          },
+          conversation,
+          'view',
+        )
       ) {
+        await socket.leave(Room.conversation(conversationId));
+        subscribedConversationIds.delete(conversationId);
+        return null;
+      }
+
+      return identity;
+    }
+
+    // 3. Eventos do cliente
+    socket.on('conversation:subscribe', async (conversationId, ack) => {
+      if (!(await authorizeConversation(conversationId))) {
         ack?.({ ok: false, error: 'Sem acesso a esta conversa' });
         return;
       }
@@ -135,30 +190,50 @@ export function setupSocketServer(httpServer: HttpServer): Server {
       subscribedConversationIds.delete(conversationId);
     });
 
-    socket.on('typing:start', (conversationId) => {
+    socket.on('typing:start', async (conversationId) => {
       if (!subscribedConversationIds.has(conversationId)) return;
-      socket.to(Room.conversation(conversationId)).emit('typing:start', {
-        conversationId,
-        userId,
-        userName: 'Atendente',
-      });
+      const identity = await authorizeConversation(conversationId);
+      if (!identity) return;
+
+      await publishRealtime(
+        Room.conversation(conversationId),
+        'typing:start',
+        {
+          conversationId,
+          userId: identity.userId,
+          userName: 'Atendente',
+        },
+        { originSocketId: socket.id },
+      );
     });
 
-    socket.on('typing:stop', (conversationId) => {
+    socket.on('typing:stop', async (conversationId) => {
       if (!subscribedConversationIds.has(conversationId)) return;
-      socket.to(Room.conversation(conversationId)).emit('typing:stop', {
-        conversationId,
-        userId,
-      });
+      const identity = await authorizeConversation(conversationId);
+      if (!identity) return;
+
+      await publishRealtime(
+        Room.conversation(conversationId),
+        'typing:stop',
+        {
+          conversationId,
+          userId: identity.userId,
+        },
+        { originSocketId: socket.id },
+      );
     });
 
     socket.on('presence:set', async (presence: AgentPresence, ack) => {
-      await setPresence(userId, presence);
+      const identity = await refreshSocketAuthorization(socket);
+      if (!identity) return;
+      await setPresence(identity.userId, presence);
       ack?.({ ok: true });
     });
 
     socket.on('presence:heartbeat', async () => {
-      await touch(userId);
+      const identity = await refreshSocketAuthorization(socket);
+      if (!identity) return;
+      await touch(identity.userId);
     });
 
     socket.on('disconnect', async () => {
@@ -167,15 +242,27 @@ export function setupSocketServer(httpServer: HttpServer): Server {
     });
   });
 
+  // Mesmo sem trafego, uma sessao revogada ou usuario desativado nao fica
+  // conectado indefinidamente. Toda entrega tambem faz esta checagem, portanto
+  // o intervalo nao cria uma janela em que dados possam escapar.
+  const authorizationTimer = setInterval(() => {
+    void Promise.all(
+      [...io.sockets.sockets.values()].map((socket) => refreshSocketAuthorization(socket)),
+    );
+  }, SOCKET_AUTH_REVALIDATION_MS);
+  authorizationTimer.unref();
+  httpServer.once('close', () => clearInterval(authorizationTimer));
+
   // Assina barramento Redis para despachar eventos emitidos por workers para os sockets locais
+  let dispatchChain = Promise.resolve();
   subscribeRealtime((envelope: RealtimeEnvelope) => {
-    for (const room of envelope.rooms) {
-      const emitter = io.to(room);
-      (emitter.emit as unknown as (event: string, payload: unknown) => void)(
-        envelope.event,
-        envelope.payload,
-      );
-    }
+    // Serializar preserva a ordem do Redis mesmo com as consultas de
+    // autorizacao assincronas feitas antes de cada envio.
+    dispatchChain = dispatchChain
+      .then(() => dispatchRealtimeEnvelope(io.sockets.sockets.values(), envelope))
+      .catch((error) => {
+        logger.error({ err: error, event: envelope.event }, 'Falha ao despachar evento em tempo real');
+      });
   }).catch((error) => {
     logger.error({ err: error }, 'Erro ao iniciar assinante do barramento de tempo real');
   });

@@ -7,18 +7,13 @@ import {
   AlertTriangle,
   Bot,
   MessageSquare,
-  ShieldCheck,
   Eye,
   RefreshCw,
   Send,
   Lock,
-  ArrowRightLeft,
-  Circle,
 } from 'lucide-react';
 import { AgentPresence, ConversationStatus, type AgentPresenceDTO, type ConversationSummary, type DashboardMetrics, type MessageDTO } from '@crm/shared';
 import { api } from '../services/api.js';
-import { formatDistanceToNow, format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 
 export const AdminLiveMonitorPage: React.FC = () => {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
@@ -28,7 +23,7 @@ export const AdminLiveMonitorPage: React.FC = () => {
   const [spectatingMessages, setSpectatingMessages] = useState<MessageDTO[]>([]);
   const [adminNote, setAdminNote] = useState('');
   const [isSendingNote, setIsSendingNote] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [, setIsLoading] = useState(true);
 
   const loadData = async () => {
     try {

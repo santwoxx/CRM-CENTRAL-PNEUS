@@ -1,9 +1,18 @@
-import { AgentPresence, UserRole } from '@crm/shared';
+import {
+  ACTIVE_CONVERSATION_STATUSES,
+  AgentPresence,
+  ConversationStatus,
+  HandoffReason,
+  UserRole,
+} from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
 import { hashPassword } from '../../lib/crypto.js';
 import { ConflictError, NotFoundError } from '../../lib/errors.js';
 import { getActiveChatCounts, setPresence } from '../routing/presence.js';
 import { revokeAllSessions } from '../auth/service.js';
+import { routeConversation } from '../routing/router.js';
+import { logger } from '../../lib/logger.js';
+import { assertDepartmentsBelongToOrg } from '../tenancy/guards.js';
 
 export interface CreateUserInput {
   orgId: string;
@@ -16,6 +25,8 @@ export interface CreateUserInput {
 }
 
 export async function createUser(input: CreateUserInput) {
+  await assertDepartmentsBelongToOrg(input.departmentIds ?? [], input.orgId);
+
   const existing = await prisma.user.findFirst({
     where: { orgId: input.orgId, email: input.email.toLowerCase(), deletedAt: null },
   });
@@ -99,6 +110,10 @@ export async function updateUser(
   const user = await prisma.user.findFirst({ where: { id, orgId, deletedAt: null } });
   if (!user) throw new NotFoundError('Usuario');
 
+  if (input.departmentIds !== undefined) {
+    await assertDepartmentsBelongToOrg(input.departmentIds, orgId);
+  }
+
   await prisma.$transaction(async (tx) => {
     if (input.departmentIds !== undefined) {
       await tx.departmentMember.deleteMany({ where: { userId: id } });
@@ -125,7 +140,70 @@ export async function updateUser(
     }
   });
 
+  // Desativar e o caminho de "a pessoa saiu da loja". Os clientes que ela
+  // estava atendendo precisam voltar para a fila, ou ficam sem resposta.
+  if (input.isActive === false) {
+    await liberarConversasDoUsuario(id, orgId);
+  }
+
   return listUsers(orgId).then((all) => all.find((u) => u.id === id));
+}
+
+/**
+ * Devolve para a fila as conversas abertas de quem esta saindo.
+ *
+ * Sem isto, desativar ou remover um atendente deixava os clientes dele
+ * pendurados: a conversa continuava ASSIGNED para alguem que nao entra mais
+ * no sistema e que o roteador nunca mais considera. Ninguem ve, ninguem
+ * responde, e nada sinaliza o problema - o cliente simplesmente e abandonado
+ * em silencio. Numa loja, isso acontece toda vez que um vendedor sai.
+ *
+ * Solta a atribuicao ANTES de rotear, porque o roteador nao mexe em conversa
+ * que ja tem dono. E limpa a preferencia do contato: cliente recorrente que
+ * apontava para quem saiu ficaria com um ponteiro morto para sempre.
+ */
+export async function liberarConversasDoUsuario(userId: string, orgId: string): Promise<number> {
+  const abertas = await prisma.conversation.findMany({
+    where: {
+      orgId,
+      assignedUserId: userId,
+      status: { in: ACTIVE_CONVERSATION_STATUSES as never },
+    },
+    select: { id: true },
+  });
+
+  await prisma.contact.updateMany({
+    where: { orgId, preferredAgentId: userId },
+    data: { preferredAgentId: null },
+  });
+
+  if (abertas.length === 0) return 0;
+
+  await prisma.conversation.updateMany({
+    where: { id: { in: abertas.map((c) => c.id) } },
+    data: {
+      assignedUserId: null,
+      status: ConversationStatus.QUEUED,
+      queuedAt: new Date(),
+    },
+  });
+
+  for (const conversa of abertas) {
+    // Uma falha de roteamento nao pode impedir a saida do atendente. A
+    // conversa ja esta em QUEUED - a varredura periodica pega depois.
+    await routeConversation(conversa.id, {
+      reason: HandoffReason.MANUAL,
+      ignoreContactPreference: true,
+    }).catch((error) =>
+      logger.error(
+        { err: error, conversationId: conversa.id, userId },
+        'Falha ao reatribuir conversa de atendente removido',
+      ),
+    );
+  }
+
+  logger.info({ userId, total: abertas.length }, 'Conversas devolvidas a fila');
+  return abertas.length;
 }
 
 export async function deleteUser(id: string, orgId: string) {
@@ -142,4 +220,5 @@ export async function deleteUser(id: string, orgId: string) {
 
   await revokeAllSessions(id);
   await setPresence(id, AgentPresence.OFFLINE, { automatic: true });
+  await liberarConversasDoUsuario(id, orgId);
 }

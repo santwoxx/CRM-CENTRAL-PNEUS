@@ -89,6 +89,7 @@ export interface SendInteractiveParams {
   body: string;
   header?: string | null;
   footer?: string | null;
+  replyToExternalId?: string | null;
   /** Ate 3 botoes; acima disso o WhatsApp exige lista. */
   buttons?: InteractiveButton[];
   list?: { buttonLabel: string; sections: InteractiveListSection[] };

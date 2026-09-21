@@ -1,8 +1,20 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { changePasswordSchema, loginSchema, refreshSchema } from '@crm/shared';
 import { changePassword, login, loginWithGoogle, logout, refresh } from './service.js';
 import { isGoogleAuthConfigured } from './firebase.js';
-import { isProduction } from '../../env.js';
+import { env, isProduction } from '../../env.js';
+import { ForbiddenError } from '../../lib/errors.js';
+import { logger } from '../../lib/logger.js';
+import { ipCliente } from '../../lib/clientIp.js';
+import { REFRESH_TTL_MS } from './tokens.js';
+import {
+  clearRefreshCookieOptions,
+  isTrustedRequestOrigin,
+  refreshCookieOptions,
+} from '../../config/http.js';
+
+const REFRESH_COOKIE = 'refresh_token';
+const COOKIE_TRANSPORT_HEADER = 'x-refresh-token-transport';
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   /**
@@ -27,30 +39,19 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   // Login com e-mail e senha
   app.post('/login', limiteCredencial, async (req, reply) => {
+    assertTrustedOrigin(req);
     const input = loginSchema.parse(req.body);
     const result = await login(input.email, input.password, {
-      ipAddress: req.ip,
+      ipAddress: ipCliente(req),
       userAgent: req.headers['user-agent'],
     });
 
-    reply.setCookie('refresh_token', result.refreshToken, {
-      path: '/auth/refresh',
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60, // 30 dias
-    });
-
-    return reply.send({
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-      expiresIn: result.expiresIn,
-      user: result.user,
-    });
+    return sendAuthResult(req, reply, result);
   });
 
   // Login com a conta Google (Firebase Authentication)
   app.post('/google', limiteCredencial, async (req, reply) => {
+    assertTrustedOrigin(req);
     const body = req.body as { idToken?: unknown } | null;
     const idToken = typeof body?.idToken === 'string' ? body.idToken.trim() : '';
 
@@ -61,24 +62,11 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const result = await loginWithGoogle(idToken, {
-      ipAddress: req.ip,
+      ipAddress: ipCliente(req),
       userAgent: req.headers['user-agent'],
     });
 
-    reply.setCookie('refresh_token', result.refreshToken, {
-      path: '/auth/refresh',
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60,
-    });
-
-    return reply.send({
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-      expiresIn: result.expiresIn,
-      user: result.user,
-    });
+    return sendAuthResult(req, reply, result);
   });
 
   // Diz ao frontend se deve exibir o botao do Google.
@@ -89,50 +77,30 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
   // Renovação de token de acesso
   app.post('/refresh', limiteCredencial, async (req, reply) => {
-    let rawToken: string | undefined;
-
-    if (req.body && typeof req.body === 'object' && 'refreshToken' in req.body) {
-      const parsed = refreshSchema.safeParse(req.body);
-      if (parsed.success) rawToken = parsed.data.refreshToken;
-    }
-
-    if (!rawToken && req.cookies?.refresh_token) {
-      rawToken = req.cookies.refresh_token;
-    }
+    assertTrustedOrigin(req);
+    const rawToken = readRefreshToken(req);
 
     if (!rawToken) {
       return reply.code(401).send({ error: { code: 'NO_REFRESH_TOKEN', message: 'Refresh token ausente' } });
     }
 
     const result = await refresh(rawToken, {
-      ipAddress: req.ip,
+      ipAddress: ipCliente(req),
       userAgent: req.headers['user-agent'],
     });
 
-    reply.setCookie('refresh_token', result.refreshToken, {
-      path: '/auth/refresh',
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60,
-    });
-
-    return reply.send({
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-      expiresIn: result.expiresIn,
-      user: result.user,
-    });
+    return sendAuthResult(req, reply, result);
   });
 
   // Logout e revogação da sessão
   app.post('/logout', async (req, reply) => {
-    const rawToken = req.cookies?.refresh_token;
+    assertTrustedOrigin(req);
+    const rawToken = readRefreshToken(req);
     if (rawToken) {
       await logout(rawToken);
     }
 
-    reply.clearCookie('refresh_token', { path: '/auth/refresh' });
+    reply.clearCookie(REFRESH_COOKIE, clearRefreshCookieOptions(isProduction));
     return reply.send({ ok: true });
   });
 
@@ -145,10 +113,65 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   app.post('/change-password', async (req, reply) => {
     const input = changePasswordSchema.parse(req.body);
     await changePassword(req.user.id, input.currentPassword, input.newPassword, {
-      ipAddress: req.ip,
+      ipAddress: ipCliente(req),
       userAgent: req.headers['user-agent'],
     });
 
     return reply.send({ ok: true, message: 'Senha alterada com sucesso' });
   });
 };
+
+function readRefreshToken(request: FastifyRequest): string | undefined {
+  if (request.body && typeof request.body === 'object' && 'refreshToken' in request.body) {
+    const parsed = refreshSchema.safeParse(request.body);
+    if (parsed.success) return parsed.data.refreshToken;
+  }
+
+  return request.cookies?.[REFRESH_COOKIE];
+}
+
+function assertTrustedOrigin(request: FastifyRequest): void {
+  if (isTrustedRequestOrigin(request.headers.origin, env.PUBLIC_API_URL, env.CORS_ORIGINS)) {
+    return;
+  }
+
+  // A resposta para o navegador fica generica de proposito: dizer ao
+  // atacante qual origem seria aceita entrega metade do trabalho. Mas sem
+  // registrar isto no servidor, o sintoma e um 403 mudo no login e nada em
+  // lugar nenhum explica o motivo - foi exatamente assim que um
+  // PUBLIC_API_URL desatualizado derrubou o acesso ao painel inteiro.
+  logger.warn(
+    {
+      origemRecebida: request.headers.origin,
+      origensAceitas: [env.PUBLIC_API_URL, ...env.CORS_ORIGINS],
+      rota: request.url,
+    },
+    'Origem recusada na rota de sessao: confira PUBLIC_API_URL e CORS_ORIGINS',
+  );
+
+  throw new ForbiddenError('Origem nao permitida para alterar a sessao', 'UNTRUSTED_ORIGIN');
+}
+
+function sendAuthResult(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  result: Awaited<ReturnType<typeof login>>,
+) {
+  if (result.refreshToken) {
+    reply.setCookie(
+      REFRESH_COOKIE,
+      result.refreshToken,
+      refreshCookieOptions(isProduction, REFRESH_TTL_MS),
+    );
+  }
+
+  // O painel usa apenas o cookie HttpOnly, portanto o segredo nao precisa
+  // ficar visivel ao JavaScript. O formato antigo permanece para clientes de
+  // API que nao optaram explicitamente pelo transporte em cookie.
+  if (request.headers[COOKIE_TRANSPORT_HEADER] === 'cookie') {
+    const { refreshToken: _refreshToken, ...safeResult } = result;
+    return reply.send(safeResult);
+  }
+
+  return reply.send(result);
+}

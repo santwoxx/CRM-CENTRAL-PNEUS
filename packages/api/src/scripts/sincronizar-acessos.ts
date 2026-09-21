@@ -3,6 +3,8 @@ import { UserRole } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { hashPassword } from '../lib/crypto.js';
 import { ACESSOS_AUTORIZADOS } from '../config/acessos.js';
+import { liberarConversasDoUsuario } from '../modules/users/service.js';
+import { disconnectRedis } from '../lib/redis.js';
 
 /**
  * Aplica a lista de acessos autorizados.
@@ -106,34 +108,65 @@ async function main() {
     }
   }
 
-  // Quem sumiu da lista perde o acesso.
-  const revogados = await prisma.user.updateMany({
+  // Quem sumiu da lista perde o acesso e sai da tela de equipe.
+  //
+  // `deletedAt` esconde da listagem sem apagar a linha: a autoria das
+  // mensagens que a pessoa enviou continua intacta, e o historico do cliente
+  // nao fica com buracos. Se ela voltar para a lista, a sincronizacao limpa
+  // o campo e o acesso volta.
+  const fora = await prisma.user.findMany({
     where: {
       orgId: org.id,
-      isActive: true,
+      deletedAt: null,
       email: { notIn: [...autorizados] },
     },
-    data: { isActive: false },
+    select: { id: true, email: true },
   });
 
-  if (revogados.count > 0) {
-    const fora = await prisma.user.findMany({
-      where: { orgId: org.id, isActive: false, email: { notIn: [...autorizados] } },
-      select: { email: true },
+  if (fora.length > 0) console.log('');
+
+  for (const u of fora) {
+    await prisma.user.update({
+      where: { id: u.id },
+      data: { isActive: false, deletedAt: new Date() },
     });
-    console.log('');
-    for (const u of fora) console.log(`  REVOGADO   ${u.email}`);
+    await prisma.departmentMember.deleteMany({ where: { userId: u.id } });
+
+    // Os clientes que essa pessoa atendia voltam para a fila. Sem isto, a
+    // conversa fica ASSIGNED para alguem que nao entra mais no sistema:
+    // ninguem ve, ninguem responde, e nada sinaliza o problema.
+    const devolvidas = await liberarConversasDoUsuario(u.id, org.id);
+
+    console.log(
+      `  REVOGADO   ${u.email}` +
+        (devolvidas > 0 ? `  (${devolvidas} conversa(s) devolvida(s) a fila)` : ''),
+    );
   }
 
   console.log(
-    `\nPronto. ${ACESSOS_AUTORIZADOS.length} com acesso, ${revogados.count} revogado(s).\n`,
+    `
+Pronto. ${ACESSOS_AUTORIZADOS.length} com acesso, ${fora.length} revogado(s).
+`,
   );
 
-  await prisma.$disconnect();
+  await encerrar();
+}
+
+/**
+ * Fecha tudo que segura o processo.
+ *
+ * Reatribuir conversas puxa o roteador, que puxa o barramento de tempo real,
+ * que abre uma conexao com o Redis. Sem fechar essa conexao o script termina
+ * o trabalho e simplesmente nao sai - fica pendurado para sempre. Num script
+ * de terminal isso parece travamento; em CI, vira job que so morre no timeout.
+ */
+async function encerrar(): Promise<void> {
+  await prisma.$disconnect().catch(() => {});
+  await disconnectRedis().catch(() => {});
 }
 
 main().catch(async (erro) => {
   console.error('Falha ao sincronizar acessos:', erro);
-  await prisma.$disconnect();
+  await encerrar();
   process.exit(1);
 });
