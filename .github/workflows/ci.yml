@@ -156,7 +156,9 @@ jobs:
           sed -i 's|^VITE_FIREBASE_API_KEY=.*|VITE_FIREBASE_API_KEY=chave-publica-do-ci|' .env
 
       - name: Constroi e sobe (sem o Caddy, que precisaria de DNS real)
-        run: $COMPOSE up -d --build api worker
+        run: |
+          $COMPOSE up -d --build api worker 2>&1 | tee subida.log
+          exit "${PIPESTATUS[0]}"
 
       - name: API fica saudavel
         run: |
@@ -205,4 +207,17 @@ jobs:
 
       - name: Logs em caso de falha
         if: failure()
-        run: $COMPOSE logs --no-color
+        # O log completo do job so e legivel com permissao de admin. As
+        # anotacoes sao publicas: publicar o fim de cada log como anotacao
+        # deixa o motivo da falha visivel para quem for investigar.
+        run: |
+          $COMPOSE ps -a > servicos.log 2>&1 || true
+          $COMPOSE logs --no-color --tail 80 >> servicos.log 2>&1 || true
+          cat servicos.log
+          anotar() {
+            [ -s "$2" ] || return 0
+            corpo=$(tail -n "$3" "$2" | tr -d '\r' | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=$1::$corpo"
+          }
+          anotar "subida" subida.log 45
+          anotar "servicos" servicos.log 90
