@@ -214,10 +214,15 @@ jobs:
           $COMPOSE ps -a > servicos.log 2>&1 || true
           $COMPOSE logs --no-color --tail 80 >> servicos.log 2>&1 || true
           cat servicos.log
+          # Anotacao grande e cortada pelo GitHub no FIM - justamente onde fica
+          # o erro. Uma por servico, curta, guardando os ultimos bytes.
           anotar() {
             [ -s "$2" ] || return 0
-            corpo=$(tail -n "$3" "$2" | tr -d '\r' | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            corpo=$(tail -n 30 "$2" | tr -d '\r' | tail -c 2500 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=$1::$corpo"
           }
-          anotar "subida" subida.log 45
-          anotar "servicos" servicos.log 90
+          for s in preparar api worker; do
+            $COMPOSE logs --no-color "$s" > "log-$s.txt" 2>&1 || true
+            anotar "$s" "log-$s.txt"
+          done
+          anotar "subida" subida.log
