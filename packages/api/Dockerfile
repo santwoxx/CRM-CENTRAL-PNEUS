@@ -55,7 +55,15 @@ RUN npm run build -w @crm/shared \
 
 # Reinstala sem as dependencias de desenvolvimento: o que vai para producao
 # nao precisa de TypeScript, Vite nem Vitest.
-RUN npm ci --omit=dev
+#
+# E GERA O CLIENTE DO PRISMA DE NOVO, DEPOIS DESTA INSTALACAO.
+# `npm ci` apaga a pasta node_modules inteira antes de instalar, e leva junto
+# o cliente gerado la em cima. O container subia com as migracoes aplicadas e
+# morria na primeira consulta:
+#   "@prisma/client did not initialize yet. Please run prisma generate"
+# Nao da para reproduzir isso fora de um container: numa maquina de
+# desenvolvimento a reinstalacao regenera o cliente sozinha, e o teste passa.
+RUN npm ci --omit=dev && npx prisma generate --schema packages/api/prisma/schema.prisma
 
 # --- Estagio 3: execucao -----------------------------------------------------
 FROM node:22-alpine AS runtime
