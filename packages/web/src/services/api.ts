@@ -1,14 +1,26 @@
 /**
  * Endereco da API.
  *
- * Em desenvolvimento usamos o caminho relativo "/api", que o proxy do Vite
- * encaminha para localhost:3333. Em producao NAO existe proxy - o front esta
- * num dominio (Vercel) e o backend em outro - entao a URL completa precisa
- * vir de VITE_API_URL no momento do build.
+ * O padrao e o caminho relativo "/api": no servidor de desenvolvimento o
+ * proxy do Vite o encaminha para a porta 3333, e em producao o proprio
+ * backend serve o painel e responde nesse prefixo. VITE_API_URL so e
+ * necessaria quando o painel fica num dominio diferente do backend.
  */
 import { refreshSocketAuthentication } from './socket.js';
 
-export const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/+$/, '') ?? '/api';
+/**
+ * Exportada para teste. A armadilha e a string VAZIA: `VITE_API_URL=` no
+ * .env nao e `undefined`, entao `?? '/api'` nao valia e a base ficava vazia.
+ * Toda chamada saia sem o prefixo - no 3333 funcionava por acaso (a API
+ * responde na raiz tambem), e no 5173 nada respondia nesse caminho: a tela
+ * de login mostrava "Not Found" em vez de entrar.
+ */
+export function resolverBaseDaApi(configurado: string | undefined): string {
+  const limpo = configurado?.trim().replace(/\/+$/, '');
+  return limpo ? limpo : '/api';
+}
+
+export const API_BASE = resolverBaseDaApi(import.meta.env.VITE_API_URL);
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined | null>;

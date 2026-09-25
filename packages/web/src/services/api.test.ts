@@ -6,7 +6,7 @@ const socketMocks = vi.hoisted(() => ({
 
 vi.mock('./socket.js', () => socketMocks);
 
-import { ApiClient } from './api.js';
+import { ApiClient, resolverBaseDaApi } from './api.js';
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -145,5 +145,21 @@ describe('cliente HTTP e renovacao de sessao', () => {
     await expect(client.get('/protected')).rejects.toThrow('Ainda nao autorizado');
     expect(refreshCalls).toBe(1);
     expect(protectedCalls).toBe(2);
+  });
+});
+
+describe('endereco base da API', () => {
+  it('usa /api quando a variavel esta vazia ou ausente', () => {
+    // O .env do projeto traz "VITE_API_URL=" sem valor: e o caso real que
+    // deixava a tela de login com "Not Found" no servidor de desenvolvimento.
+    expect(resolverBaseDaApi('')).toBe('/api');
+    expect(resolverBaseDaApi('   ')).toBe('/api');
+    expect(resolverBaseDaApi(undefined)).toBe('/api');
+  });
+
+  it('respeita um endereco configurado, sem barra no fim', () => {
+    expect(resolverBaseDaApi('https://api.exemplo.com.br')).toBe('https://api.exemplo.com.br');
+    expect(resolverBaseDaApi('https://api.exemplo.com.br/')).toBe('https://api.exemplo.com.br');
+    expect(resolverBaseDaApi('https://api.exemplo.com.br///')).toBe('https://api.exemplo.com.br');
   });
 });
