@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { UserRole } from '@prisma/client';
+import { UserRole } from '@crm/shared';
 import { prisma } from '../db/prisma.js';
 import { hashPassword } from '../lib/crypto.js';
 import { ACESSOS_AUTORIZADOS } from '../config/acessos.js';

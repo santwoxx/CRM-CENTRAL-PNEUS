@@ -131,6 +131,16 @@ export const MESSAGE_STATUS_RANK: Record<MessageStatus, number> = {
   FAILED: 5,
 };
 
+/** Categoria do pneu, espelhando o enum do banco. */
+export const TireCategory = {
+  PASSEIO: 'PASSEIO',
+  SUV: 'SUV',
+  CAMINHONETE: 'CAMINHONETE',
+  CARGA: 'CARGA',
+  MOTO: 'MOTO',
+} as const;
+export type TireCategory = (typeof TireCategory)[keyof typeof TireCategory];
+
 export const RoutingStrategy = {
   /** Distribui em rodizio entre os atendentes disponiveis. */
   ROUND_ROBIN: 'ROUND_ROBIN',

@@ -1,4 +1,4 @@
-import { UserRole } from '@prisma/client';
+import { UserRole } from '@crm/shared';
 
 /**
  * Quem pode entrar no CRM, e com qual cargo.

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { AgentPresence, RoutingStrategy, type PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+import { AgentPresence, RoutingStrategy } from '@crm/shared';
 import { hashPassword } from '../lib/crypto.js';
 import { describeActiveProvider } from '../modules/ai/provider.js';
 import { DEFAULT_CENTRAL_PNEUS_PROMPT, DEFAULT_QUALIFICATION_GOALS } from '../modules/ai/persona.js';

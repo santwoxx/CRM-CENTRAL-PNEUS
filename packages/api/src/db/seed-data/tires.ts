@@ -1,4 +1,4 @@
-import { TireCategory } from '@prisma/client';
+import { TireCategory } from '@crm/shared';
 
 /**
  * Catálogo inicial de pneus.
