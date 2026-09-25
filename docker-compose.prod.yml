@@ -20,6 +20,14 @@
 # =============================================================================
 name: crm-central-pneus
 
+# Disco de 100 GB nao e infinito: sem teto, o log de um servico que entra em
+# laco de erro enche a particao e derruba o banco junto.
+x-log: &log
+  driver: json-file
+  options:
+    max-size: '20m'
+    max-file: '5'
+
 x-app-env: &app-env
   NODE_ENV: production
   DATABASE_URL: postgresql://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}@postgres:5432/${POSTGRES_DB:-crm}?schema=public
@@ -57,14 +65,11 @@ x-app: &app
   volumes:
     - media_storage:/app/storage
   networks: [interna]
-  logging:
-    driver: json-file
-    options:
-      max-size: '20m'
-      max-file: '5'
+  logging: *log
 
 services:
   postgres:
+    logging: *log
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -86,6 +91,7 @@ services:
       start_period: 20s
 
   redis:
+    logging: *log
     image: redis:7-alpine
     restart: unless-stopped
     # appendonly: a fila nao evapora se o container reiniciar.
@@ -164,6 +170,7 @@ services:
   # sozinho (Let's Encrypt), desde que o DNS do dominio aponte para a VM e as
   # portas 80 e 443 estejam liberadas.
   caddy:
+    logging: *log
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on: [api]
@@ -184,7 +191,12 @@ services:
   # WhatsApp via QR Code (numero secundario / campanha). So sobe com
   #   docker compose -f docker-compose.prod.yml --profile evolution up -d
   evolution:
-    image: atendai/evolution-api:v2.1.1
+    logging: *log
+    # O projeto trocou de namespace: "atendai/evolution-api" nao existe mais no
+    # registro publico e o pull falha com "access denied". A versao tambem
+    # subiu de proposito - imagem antiga costuma quebrar o QR Code quando o
+    # WhatsApp muda o protocolo.
+    image: evoapicloud/evolution-api:v2.3.7
     restart: unless-stopped
     profiles: ['evolution']
     depends_on:
@@ -220,6 +232,7 @@ services:
   # segundos - serve de ultimo recurso da cadeia, nao de provedor principal.
   #   docker compose -f docker-compose.prod.yml --profile ia up -d
   ollama:
+    logging: *log
     image: ollama/ollama:latest
     restart: unless-stopped
     profiles: ['ia']

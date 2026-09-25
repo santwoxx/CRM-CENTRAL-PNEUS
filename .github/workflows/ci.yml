@@ -205,6 +205,24 @@ jobs:
           echo "$saida"
           echo "$saida" | grep -q NOAUTH
 
+      # O canal WhatsApp do numero da campanha. Sem isto, a primeira prova de
+      # que a imagem existe e sobe seria na VM do cliente - e a imagem antiga
+      # referenciada aqui ja tinha saido do ar sem ninguem perceber.
+      - name: Evolution sobe e responde ao CRM
+        run: |
+          $COMPOSE --profile evolution up -d evolution
+          chave=$(grep ^EVOLUTION_API_KEY= .env | cut -d= -f2-)
+          for i in $(seq 1 40); do
+            if $COMPOSE exec -T api node -e "
+              fetch('http://evolution:8080/instance/fetchInstances',{headers:{apikey:process.argv[1]}})
+                .then(r => process.exit(r.status === 200 ? 0 : 1))
+                .catch(() => process.exit(1))" "$chave"; then
+              echo "Evolution respondeu ao CRM pela rede interna"; exit 0
+            fi
+            sleep 6
+          done
+          echo "Evolution nao respondeu"; $COMPOSE logs --no-color --tail 40 evolution; exit 1
+
       - name: Logs em caso de falha
         if: failure()
         # O log completo do job so e legivel com permissao de admin. As
@@ -221,7 +239,7 @@ jobs:
             corpo=$(tail -n 30 "$2" | tr -d '\r' | tail -c 2500 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=$1::$corpo"
           }
-          for s in preparar api worker; do
+          for s in preparar api worker evolution; do
             $COMPOSE logs --no-color "$s" > "log-$s.txt" 2>&1 || true
             anotar "$s" "log-$s.txt"
           done
