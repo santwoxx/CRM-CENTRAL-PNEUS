@@ -201,10 +201,13 @@ curl -s -X POST http://127.0.0.1:8080/webhook/set/central-pneus \
    `docker compose -f docker-compose.prod.yml logs api | grep -i evolution`.
    Um `Token invalido` indica URL do webhook errada no passo 3.
 
-> O canal Evolution **nunca foi exercitado de ponta a ponta** — o passo 5 é o
-> primeiro teste real. Se o QR Code não aparecer, a versão da imagem pode
-> estar desatualizada em relação ao WhatsApp: troque `atendai/evolution-api`
-> no `docker-compose.prod.yml` pela versão mais recente.
+> O envio e o recebimento pela Evolution **nunca foram exercitados com um
+> número real** — o passo 5 é o primeiro teste de verdade. O que já é
+> verificado a cada publicação: a imagem sobe e o CRM fala com ela.
+>
+> Se o QR Code não aparecer, a imagem pode estar atrás do protocolo atual do
+> WhatsApp: suba a versão de `evoapicloud/evolution-api` no
+> `docker-compose.prod.yml`.
 
 ### Número principal (API oficial da Meta)
 

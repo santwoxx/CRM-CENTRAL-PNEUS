@@ -16,12 +16,16 @@ vi.mock('../db/prisma.js', () => ({
       findUnique: (...args: unknown[]) => findConversation(...args),
       update: (...args: unknown[]) => updateConversation(...args),
     },
-    aiUsage: { create: (...args: unknown[]) => createUsage(...args) },
+    aiUsage: {
+      create: (...args: unknown[]) => createUsage(...args),
+      // Consulta do teto mensal de gasto: sem gasto no mes.
+      aggregate: vi.fn(async () => ({ _sum: { costUsd: 0 } })),
+    },
     department: { findFirst: vi.fn() },
   },
 }));
 vi.mock('../lib/logger.js', () => ({
-  logger: { debug: vi.fn(), info: vi.fn(), error: vi.fn() },
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../modules/messages/outbox.js', () => ({
   queueAiMessage: (...args: unknown[]) => queueAiMessage(...args),

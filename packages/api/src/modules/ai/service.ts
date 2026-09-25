@@ -5,6 +5,7 @@ import {
   MessageSenderType,
 } from '@crm/shared';
 import { prisma } from '../../db/prisma.js';
+import { apenasProvedoresGratuitos } from './orcamento.js';
 import { logger } from '../../lib/logger.js';
 import { env } from '../../env.js';
 import { queueAiMessage, queueSystemMessage } from '../messages/outbox.js';
@@ -140,10 +141,25 @@ ${shop.contextBlock}` : '',
     // derrubar a conversa para a fila humana.
     const escolha = resolvePersonaProvider(persona.provider, persona.model);
 
+    // Teto mensal atingido: seguimos atendendo, mas so por quem nao cobra.
+    // Se nao houver gratuito disponivel, a geracao falha e o cliente vai para
+    // um atendente - nunca fica sem resposta por causa de orcamento.
+    const somenteGratuitos = await apenasProvedoresGratuitos(conversation.orgId).catch((error) => {
+      logger.warn({ err: error, orgId: conversation.orgId }, 'Falha ao consultar o gasto do mes');
+      return false;
+    });
+    if (somenteGratuitos) {
+      logger.warn(
+        { orgId: conversation.orgId, tetoUsd: env.AI_MONTHLY_BUDGET_USD },
+        'Teto mensal de IA atingido: usando apenas provedores gratuitos',
+      );
+    }
+
     const aiResult = await generateCompletion(aiMessages, {
       ...escolha,
       temperature: persona.temperature,
       maxTokens: persona.maxTokens,
+      somenteGratuitos,
     });
 
     // Enfileira a resposta gerada para sair pelo WhatsApp

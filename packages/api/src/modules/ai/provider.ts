@@ -61,6 +61,8 @@ export interface AiCompletionOptions {
   systemPrompt?: string;
   /** Timeout proprio: modelo local em maquina modesta demora mais. */
   timeoutMs?: number;
+  /** Teto mensal atingido: usar so quem nao cobra. */
+  somenteGratuitos?: boolean;
 }
 
 export interface AiCompletionResult {
@@ -538,6 +540,13 @@ export function describeActiveProvider(): {
   };
 }
 
+/** Provedor que nao cobra: local, ou camada gratuita do servico. */
+export function ehProvedorGratuito(provider: AiProviderName): boolean {
+  if (!PROVIDER_NAMES.includes(provider)) return false;
+  const perfil = profileFor(provider);
+  return perfil.local || perfil.freeTier;
+}
+
 /** true quando o provedor tem credencial (ou nao precisa de uma, como o local). */
 export function isProviderConfigured(provider: AiProviderName): boolean {
   if (!PROVIDER_NAMES.includes(provider)) return false;
@@ -654,7 +663,17 @@ export async function generateCompletion(
   // Provedor pedido explicitamente (teste, persona) nao entra em cadeia.
   if (options.provider) return tentarProvedor(messages, options);
 
-  const cadeia = cadeiaDeProvedores();
+  const cadeia = cadeiaDeProvedores().filter(
+    (nome) => !options.somenteGratuitos || ehProvedorGratuito(nome),
+  );
+
+  if (cadeia.length === 0 && options.somenteGratuitos) {
+    throw new ProviderError(
+      'orcamento',
+      'Teto mensal de gasto com IA atingido e nenhum provedor gratuito disponivel.',
+      { retryable: false },
+    );
+  }
 
   if (cadeia.length === 0) {
     throw new ProviderError(

@@ -39,7 +39,7 @@ vi.mock('../env.js', () => ({
   isProduction: false,
 }));
 
-const { generateCompletion } = await import('../modules/ai/provider.js');
+const { generateCompletion, ehProvedorGratuito } = await import('../modules/ai/provider.js');
 
 const MENSAGENS = [{ role: 'user' as const, content: 'oi' }];
 
@@ -122,5 +122,39 @@ describe('cadeia de provedores de IA', () => {
 
     await expect(generateCompletion(MENSAGENS)).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Teto mensal de gasto. A regra nao pode virar "parar de atender": ao ser
+ * atingido, o sistema segue pelos gratuitos e so deixa de pagar.
+ */
+describe('teto mensal de gasto', () => {
+  it('reconhece quem cobra e quem nao cobra', () => {
+    expect(ehProvedorGratuito('groq')).toBe(true);
+    expect(ehProvedorGratuito('ollama')).toBe(true);
+    expect(ehProvedorGratuito('openai')).toBe(false);
+  });
+
+  it('com o teto atingido, pula os pagos e atende pelo gratuito', async () => {
+    fetchMock.mockResolvedValueOnce(resposta('resposta de graca'));
+
+    const r = await generateCompletion(MENSAGENS, { somenteGratuitos: true });
+
+    expect(r.provider).toBe('groq');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('nao chama provedor pago nem quando o gratuito falha', async () => {
+    // Sem esta garantia, o teto seria apenas decorativo: bastava a cota
+    // gratuita acabar para a conta paga voltar a ser usada.
+    fetchMock.mockResolvedValueOnce(falha(429, 'cota esgotada'));
+
+    await expect(generateCompletion(MENSAGENS, { somenteGratuitos: true })).rejects.toThrow();
+
+    // A URL da Groq e api.groq.com/openai/v1 - comparar por "openai" daria
+    // falso positivo. O que nao pode acontecer e chamar a OpenAI de verdade.
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('api.openai.com'))).toBe(false);
   });
 });
