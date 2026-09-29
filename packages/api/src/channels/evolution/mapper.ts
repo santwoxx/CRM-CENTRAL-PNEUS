@@ -57,9 +57,22 @@ export function isGroupMessage(jid: string | undefined): boolean {
   return Boolean(jid?.endsWith('@g.us'));
 }
 
+/**
+ * Nome do evento numa forma so.
+ *
+ * A Evolution ASSINA os eventos como "MESSAGES_UPSERT" e ENTREGA
+ * "messages.upsert". As duas grafias circulam na documentacao e entre
+ * versoes; uma instalacao que entregue a grafia da assinatura cairia no
+ * `default` e ignoraria TODA mensagem de cliente - sem erro, sem log de
+ * falha, sem nada para investigar. Aceitar as duas custa uma linha.
+ */
+function normalizarEvento(evento: string): string {
+  return evento.trim().toLowerCase().replace(/_/g, '.');
+}
+
 export function parseWebhook(body: unknown): NormalizedEvent[] {
   const payload = body as EvolutionWebhookBody;
-  const event = payload?.event ?? '';
+  const event = normalizarEvento(payload?.event ?? '');
   const data = payload?.data;
 
   if (!data) return [{ kind: 'ignored', reason: 'payload sem data' }];
