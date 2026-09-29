@@ -1,8 +1,26 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { LifecycleStage, Permission, listContactsSchema, updateContactSchema } from '@crm/shared';
 import { getContact, listContacts, updateContact } from './service.js';
+import { apagarDadosDoContato } from './lgpd.js';
+import { ipCliente } from '../../lib/clientIp.js';
 
 export const contactRoutes: FastifyPluginAsync = async (app) => {
+  /**
+   * Direito de eliminacao (LGPD): apaga o cliente, as conversas dele, as
+   * mensagens e os arquivos enviados. Nao tem volta - e por isso que exige a
+   * permissao mais alta.
+   */
+  app.delete<{ Params: { id: string } }>('/:id', async (req, reply) => {
+    req.authorize(Permission.CONTACT_DELETE);
+
+    const resultado = await apagarDadosDoContato(req.user.orgId, req.params.id, {
+      userId: req.user.id,
+      ipAddress: ipCliente(req),
+    });
+
+    return reply.send({ ok: true, ...resultado });
+  });
+
   // Listar contatos
   app.get('/', async (req, reply) => {
     req.authorize(Permission.CONTACT_VIEW);

@@ -12,6 +12,7 @@ import { createUser, deleteUser, listUsers, updateUser } from './service.js';
 import { setPresence } from '../routing/presence.js';
 import { prisma } from '../../db/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { ipCliente } from '../../lib/clientIp.js';
 
 export const userRoutes: FastifyPluginAsync = async (app) => {
   // Listagem de atendentes e membros da equipe
@@ -38,7 +39,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       role: input.role as UserRole | undefined,
       maxConcurrentChats: input.maxConcurrentChats,
       departmentIds: input.departmentIds,
-    });
+    }, autor(req));
 
     // createUser precisa do registro completo internamente, mas hash de senha,
     // UID social e contadores de bloqueio jamais devem sair na resposta.
@@ -62,7 +63,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       maxConcurrentChats: input.maxConcurrentChats,
       isActive: input.isActive,
       departmentIds: input.departmentIds,
-    });
+    }, autor(req));
 
     return reply.send(updated);
   });
@@ -74,7 +75,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     // caminho: sem isto, um administrador desativava o dono da conta.
     await assertPodeAlterarUsuario(ator(req), req.params.id, { isActive: false });
 
-    await deleteUser(req.params.id, req.user.orgId);
+    await deleteUser(req.params.id, req.user.orgId, autor(req));
     return reply.send({ ok: true });
   });
 
@@ -94,6 +95,19 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
   });
 };
 
+
+/** Quem executou a acao, para a trilha de auditoria. */
+function autor(req: {
+  user: { id: string };
+  ip: string;
+  headers: Record<string, unknown>;
+}) {
+  return {
+    userId: req.user.id,
+    ipAddress: ipCliente(req),
+    userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+  };
+}
 
 /** Extrai o ator das checagens de privilegio a partir da requisicao. */
 function ator(req: { user: { id: string; orgId: string; role: string } }) {

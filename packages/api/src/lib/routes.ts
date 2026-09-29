@@ -17,6 +17,7 @@ export const API_PREFIXES = [
   '/channels',
   '/ai',
   '/dashboard',
+  '/audit',
   '/simulator',
   '/media',
   // A rota de upload vive na raiz, sem prefixo proprio. Sem ela nesta lista,

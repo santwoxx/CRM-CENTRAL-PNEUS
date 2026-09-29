@@ -28,6 +28,7 @@ import { messageRoutes } from './modules/messages/routes.js';
 import { channelRoutes } from './modules/channels/routes.js';
 import { aiRoutes } from './modules/ai/routes.js';
 import { dashboardRoutes } from './modules/dashboard/routes.js';
+import { auditRoutes } from './modules/audit/routes.js';
 import { mediaRoutes } from './modules/media/routes.js';
 import { webhookRoutes } from './modules/webhooks/routes.js';
 import { healthRoutes } from './modules/health/routes.js';
@@ -169,6 +170,7 @@ async function buildServer() {
   await app.register(channelRoutes, { prefix: '/channels' });
   await app.register(aiRoutes, { prefix: '/ai' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
+  await app.register(auditRoutes, { prefix: '/audit' });
   await app.register(simulatorRoutes, { prefix: '/simulator' });
   await app.register(mediaRoutes);
   await app.register(webhookRoutes, { prefix: '/webhooks' });

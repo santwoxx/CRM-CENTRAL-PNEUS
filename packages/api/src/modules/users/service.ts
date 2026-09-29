@@ -10,6 +10,7 @@ import { hashPassword } from '../../lib/crypto.js';
 import { ConflictError, NotFoundError } from '../../lib/errors.js';
 import { getActiveChatCounts, setPresence } from '../routing/presence.js';
 import { revokeAllSessions } from '../auth/service.js';
+import { recordAudit } from '../audit/service.js';
 import { routeConversation } from '../routing/router.js';
 import { logger } from '../../lib/logger.js';
 import { assertDepartmentsBelongToOrg } from '../tenancy/guards.js';
@@ -24,7 +25,7 @@ export interface CreateUserInput {
   departmentIds?: string[];
 }
 
-export async function createUser(input: CreateUserInput) {
+export async function createUser(input: CreateUserInput, ator?: AtorDaAcao) {
   await assertDepartmentsBelongToOrg(input.departmentIds ?? [], input.orgId);
 
   const existing = await prisma.user.findFirst({
@@ -57,6 +58,25 @@ export async function createUser(input: CreateUserInput) {
         include: { department: { select: { id: true, name: true, color: true } } },
       },
     },
+  });
+
+  await recordAudit({
+    orgId: input.orgId,
+    userId: ator?.userId ?? null,
+    action: 'user.created',
+    entity: 'user',
+    entityId: user.id,
+    // A senha nunca entra aqui: a auditoria tem lista propria de campos
+    // proibidos, e este objeto e montado a mao de qualquer forma.
+    after: {
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      maxConcurrentChats: user.maxConcurrentChats,
+      departmentIds: input.departmentIds ?? [],
+    },
+    ipAddress: ator?.ipAddress ?? null,
+    userAgent: ator?.userAgent ?? null,
   });
 
   return user;
@@ -96,6 +116,28 @@ export async function listUsers(orgId: string) {
   }));
 }
 
+/**
+ * Quem executou a acao, para a trilha de auditoria.
+ *
+ * Mudanca de cargo e desativacao de acesso sao as acoes mais sensiveis do
+ * sistema - quem promoveu quem a administrador, quem tirou o acesso de quem.
+ * Elas nao eram registradas em lugar nenhum.
+ */
+export interface AtorDaAcao {
+  userId: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+/** Setores atuais, para a auditoria mostrar o antes e o depois. */
+async function setoresDoUsuario(userId: string): Promise<string[]> {
+  const vinculos = await prisma.departmentMember.findMany({
+    where: { userId },
+    select: { departmentId: true },
+  });
+  return vinculos.map((v) => v.departmentId);
+}
+
 export async function updateUser(
   id: string,
   orgId: string,
@@ -106,9 +148,12 @@ export async function updateUser(
     isActive?: boolean;
     departmentIds?: string[];
   },
+  ator?: AtorDaAcao,
 ) {
   const user = await prisma.user.findFirst({ where: { id, orgId, deletedAt: null } });
   if (!user) throw new NotFoundError('Usuario');
+
+  const setoresAntes = await setoresDoUsuario(id);
 
   if (input.departmentIds !== undefined) {
     await assertDepartmentsBelongToOrg(input.departmentIds, orgId);
@@ -145,6 +190,39 @@ export async function updateUser(
   if (input.isActive === false) {
     await liberarConversasDoUsuario(id, orgId);
   }
+
+  await recordAudit({
+    orgId,
+    userId: ator?.userId ?? null,
+    // Cargo alterado ganha acao propria: e o que se procura primeiro quando
+    // alguem pergunta "quem virou administrador?".
+    action:
+      input.role !== undefined && input.role !== user.role
+        ? 'user.role_changed'
+        : input.isActive === false
+          ? 'user.deactivated'
+          : 'user.updated',
+    entity: 'user',
+    entityId: id,
+    before: {
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+      maxConcurrentChats: user.maxConcurrentChats,
+      departmentIds: setoresAntes,
+    },
+    after: {
+      name: input.name ?? user.name,
+      email: user.email,
+      role: input.role ?? user.role,
+      isActive: input.isActive ?? user.isActive,
+      maxConcurrentChats: input.maxConcurrentChats ?? user.maxConcurrentChats,
+      departmentIds: input.departmentIds ?? setoresAntes,
+    },
+    ipAddress: ator?.ipAddress ?? null,
+    userAgent: ator?.userAgent ?? null,
+  });
 
   return listUsers(orgId).then((all) => all.find((u) => u.id === id));
 }
@@ -206,9 +284,11 @@ export async function liberarConversasDoUsuario(userId: string, orgId: string): 
   return abertas.length;
 }
 
-export async function deleteUser(id: string, orgId: string) {
+export async function deleteUser(id: string, orgId: string, ator?: AtorDaAcao) {
   const user = await prisma.user.findFirst({ where: { id, orgId, deletedAt: null } });
   if (!user) throw new NotFoundError('Usuario');
+
+  const setoresAntes = await setoresDoUsuario(id);
 
   await prisma.$transaction([
     prisma.user.update({
@@ -221,4 +301,21 @@ export async function deleteUser(id: string, orgId: string) {
   await revokeAllSessions(id);
   await setPresence(id, AgentPresence.OFFLINE, { automatic: true });
   await liberarConversasDoUsuario(id, orgId);
+
+  await recordAudit({
+    orgId,
+    userId: ator?.userId ?? null,
+    action: 'user.removed',
+    entity: 'user',
+    entityId: id,
+    before: {
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+      departmentIds: setoresAntes,
+    },
+    ipAddress: ator?.ipAddress ?? null,
+    userAgent: ator?.userAgent ?? null,
+  });
 }
