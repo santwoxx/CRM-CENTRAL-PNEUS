@@ -11,10 +11,16 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     return reply.send(metrics);
   });
 
-  // Visão em tempo real de todas as conversas ativas (Supervisão do Admin)
+  // Conversas em andamento. Mostra o que ESTE usuario pode ver: tudo para o
+  // administrador, apenas os setores dele para o supervisor.
   app.get('/live', async (req, reply) => {
     req.authorize(Permission.CONVERSATION_SPECTATE, Permission.CONVERSATION_VIEW_ALL);
-    const conversations = await getLiveConversations(req.user.orgId);
+    const conversations = await getLiveConversations({
+      id: req.user.id,
+      orgId: req.user.orgId,
+      role: req.user.role,
+      departmentIds: req.user.departments.map((departamento) => departamento.id),
+    });
     return reply.send(conversations);
   });
 

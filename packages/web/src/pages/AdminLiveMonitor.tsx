@@ -42,10 +42,48 @@ export const AdminLiveMonitorPage: React.FC = () => {
     }
   };
 
+  /**
+   * Atualizacao a cada 5s enquanto alguem esta olhando.
+   *
+   * Esta tela e das que ficam abertas o dia inteiro, e cada volta busca
+   * metricas, presenca e as conversas em andamento com contato, setor e
+   * ultima mensagem. Numa aba esquecida em segundo plano isso e trabalho
+   * jogado fora no banco e no link da loja, de dia e de madrugada. Parar
+   * quando a aba some e recarregar assim que ela volta mantem a tela igual
+   * de fresca para quem a usa.
+   */
   useEffect(() => {
+    let intervalo: ReturnType<typeof setInterval> | null = null;
+
+    const parar = () => {
+      if (intervalo !== null) {
+        clearInterval(intervalo);
+        intervalo = null;
+      }
+    };
+
+    const comecar = () => {
+      if (intervalo !== null) return;
+      intervalo = setInterval(loadData, 5000);
+    };
+
+    const aoMudarVisibilidade = () => {
+      if (document.visibilityState === 'visible') {
+        loadData();
+        comecar();
+      } else {
+        parar();
+      }
+    };
+
     loadData();
-    const interval = setInterval(loadData, 5000); // Polling suave de 5s como fallback para o socket
-    return () => clearInterval(interval);
+    if (document.visibilityState === 'visible') comecar();
+    document.addEventListener('visibilitychange', aoMudarVisibilidade);
+
+    return () => {
+      parar();
+      document.removeEventListener('visibilitychange', aoMudarVisibilidade);
+    };
   }, []);
 
   // Quando o admin abre uma conversa para espionar ao vivo
