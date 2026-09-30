@@ -24,7 +24,14 @@ com HTTPS, backup e WhatsApp. Siga na ordem — cada passo depende do anterior.
 No console da Oracle: **Compute → Instances → Create instance**.
 
 - **Image:** Ubuntu 24.04 (a versão *aarch64*)
-- **Shape:** `VM.Standard.A1.Flex` — **4 OCPU, 24 GB** (o limite gratuito inteiro)
+- **Shape:** `VM.Standard.A1.Flex` — **2 OCPU, 12 GB**
+
+> Em junho de 2026 a Oracle **reduziu o limite gratuito pela metade**: eram 4
+> OCPU e 24 GB, hoje a franquia (1.500 horas de OCPU e 9.000 horas de GB por
+> mês) equivale a **2 OCPU e 12 GB** ligados o tempo todo. Uma máquina de
+> 4 OCPU/24 GB rodando 24 h por dia consome o **dobro** da franquia, e o
+> excedente é cobrado — inclusive na conta Pay As You Go. Sobra folga: o CRM
+> inteiro usa cerca de 2,5 GB dos 12 GB.
 - **Boot volume:** 100 GB
 - **SSH keys:** *Generate a key pair* e **baixe a chave privada** — sem ela não há como entrar no servidor
 

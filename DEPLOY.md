@@ -136,7 +136,7 @@ a camada *Always Free* não expira e não é cobrada.
 
 A oferta é generosa o bastante para rodar **tudo, inclusive a IA**:
 
-- 4 vCPU ARM Ampere + **24 GB de RAM**
+- 2 vCPU ARM Ampere + **12 GB de RAM** (franquia reduzida pela Oracle em jun/2026)
 - 200 GB de disco
 - 10 TB de tráfego/mês
 - IP público fixo
