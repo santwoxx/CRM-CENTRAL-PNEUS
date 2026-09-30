@@ -38,6 +38,11 @@ No console da Oracle: **Compute → Instances → Create instance**.
 Se aparecer *Out of capacity*, tente outro *Availability Domain* ou volte
 algumas horas depois — é comum nas regiões de São Paulo.
 
+> **Uma máquina ARM só.** A franquia (1.500 horas de OCPU por mês) é da
+> conta inteira, não por instância. Esta VM, ligada o tempo todo, consome
+> cerca de 97% dela — uma segunda instância ARM, mesmo pequena, passa do
+> limite e vira cobrança.
+
 > **Mude a conta para *Pay As You Go*** (Billing → Upgrade). Continua R$ 0
 > dentro dos limites gratuitos, mas a Oracle **recupera instâncias gratuitas
 > ociosas** de contas não atualizadas — e um CRM de loja passa a maior parte
@@ -136,7 +141,8 @@ Access Token* do GitHub (não a senha).
 docker compose -f docker-compose.prod.yml --profile evolution up -d --build
 ```
 
-A primeira vez leva de 5 a 10 minutos (compila tudo na VM). Acompanhe:
+A primeira vez leva de **10 a 20 minutos**: ele compila o sistema inteiro
+com os 2 núcleos da máquina gratuita. Acompanhe:
 
 ```bash
 docker compose -f docker-compose.prod.yml ps

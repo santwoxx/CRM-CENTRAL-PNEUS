@@ -78,6 +78,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-crm}
       # Sem isso o Postgres cria o banco com locale C e a ordenacao de acentos fica errada.
       POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=pt-BR --encoding=UTF8'
+    # Dimensionado para a maquina gratuita da Oracle (2 OCPU, 12 GB):
+    # shared_buffers em 512 MB deixa memoria de sobra para o sistema e para os
+    # demais servicos. Conexoes sobram: o Prisma abre nucleos x 2 + 1 por
+    # processo - 5 na API e 5 no worker.
     command: ['postgres', '-c', 'max_connections=100', '-c', 'shared_buffers=512MB']
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -220,6 +224,10 @@ services:
       LOG_LEVEL: ERROR
       DEL_INSTANCE: 'false'
       QRCODE_LIMIT: '30'
+    # A sessao do WhatsApp guarda estado em memoria e cresce com o tempo. Sem
+    # teto, um vazamento aqui derruba a maquina inteira - e o kernel escolhe
+    # quem matar, normalmente o Postgres. Com teto, so a Evolution reinicia.
+    mem_limit: 1g
     # So no loopback da VM: acessivel por tunel SSH para configurar a
     # instancia (PRODUCAO.md), nunca pela internet.
     ports:
@@ -236,6 +244,9 @@ services:
     image: ollama/ollama:latest
     restart: unless-stopped
     profiles: ['ia']
+    # Um modelo carregado ocupa o que encontrar pela frente. Sem teto, ligar
+    # este perfil numa maquina de 12 GB expulsa o banco da memoria.
+    mem_limit: 6g
     volumes:
       - ollama_models:/root/.ollama
     networks: [interna]
